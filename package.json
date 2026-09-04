@@ -1,0 +1,10 @@
+{
+  "name": "tw-mrt-live",
+  "private": true,
+  "type": "module",
+  "description": "台灣捷運即時位置圖 — GitHub Pages 靜態站，零費用",
+  "scripts": {
+    "dev": "node dev-proxy.js",
+    "fetch-static": "node scripts/fetch-static.js"
+  }
+}

@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>台灣捷運即時位置圖</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --ink:#1c2430;
+    --muted:#6b7684;
+    --rule:#dfe3e8;
+    --panel:rgba(255,255,255,.94);
+    --panel-solid:#ffffff;
+    --live:#1f9d55;
+    --warn:#c9822b;
+    --shadow:0 6px 24px rgba(28,36,48,.14), 0 1px 3px rgba(28,36,48,.10);
+    --radius:14px;
+    --font:"Noto Sans TC","PingFang TC","Microsoft JhengHei","Heiti TC",system-ui,sans-serif;
+    --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:var(--font);color:var(--ink);background:#eef1f4;overflow:hidden;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  #map{position:fixed;inset:0;background:#eef1f4}
+  button{font:inherit;color:inherit}
+  h1,h2,h3,p,ul{margin:0}
+  ul{padding:0;list-style:none}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---------- top bar ---------- */
+  .topbar{position:fixed;top:12px;left:12px;right:12px;z-index:1000;display:flex;align-items:center;gap:12px;pointer-events:none}
+  .topbar>*{pointer-events:auto}
+  .brand{display:flex;align-items:center;gap:10px;background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:999px;padding:8px 16px 8px 12px;box-shadow:var(--shadow)}
+  .brand h1{font-size:15px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+  .live-dot{width:10px;height:10px;border-radius:50%;background:#b8c0ca;flex:none;position:relative}
+  .live-dot.on{background:var(--live)}
+  .live-dot.on::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--live);opacity:.6;animation:ping 1.8s ease-out infinite}
+  .live-dot.err{background:var(--warn)}
+  @keyframes ping{0%{transform:scale(.6);opacity:.7}100%{transform:scale(1.5);opacity:0}}
+  .status{background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:999px;padding:8px 14px;box-shadow:var(--shadow);color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+  .status b{color:var(--ink);font-weight:500}
+  .spacer{flex:1}
+  .btn{border:0;background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:999px;padding:8px 14px;box-shadow:var(--shadow);cursor:pointer;font-weight:500;white-space:nowrap}
+  .btn:hover{background:#fff}
+  .btn:focus-visible,.chip:focus-visible,.sys-row button:focus-visible{outline:2px solid #2b6cb0;outline-offset:2px}
+  .mobile-only{display:none}
+
+  /* ---------- panels ---------- */
+  .panel{position:fixed;z-index:1000;background:var(--panel-solid);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 10px;border-bottom:1px solid var(--rule)}
+  .panel-head h2{font-size:14px;font-weight:700}
+  .close{border:0;background:transparent;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:20px;line-height:1;color:var(--muted)}
+  .close:hover{background:#f0f2f5;color:var(--ink)}
+  .panel-body{overflow:auto;padding:10px 14px 14px;flex:1;overscroll-behavior:contain}
+
+  .systems{left:12px;top:64px;width:300px;max-height:calc(100vh - 88px)}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--muted);font-size:12px;padding:10px 14px;border-bottom:1px solid var(--rule)}
+  .legend li{display:flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:4px;background:#888;border:2px solid #fff;box-shadow:0 0 0 1px #c9cfd6;display:inline-block}
+  .sw.at{box-shadow:0 0 0 1px #c9cfd6,0 0 0 4px rgba(136,136,136,.25)}
+  .sw.est{border-style:dashed}
+
+  .sys-row{padding:8px 0;border-bottom:1px solid var(--rule)}
+  .sys-row:last-child{border-bottom:0}
+  .sys-top{display:flex;align-items:center;gap:8px}
+  .sys-top input{width:16px;height:16px;margin:0;accent-color:var(--ink);cursor:pointer}
+  .sys-name{flex:1;border:0;background:transparent;text-align:left;padding:2px 4px;border-radius:6px;cursor:pointer;font-weight:500}
+  .sys-name:hover{background:#f0f2f5}
+  .sys-name small{color:var(--muted);font-weight:400;margin-left:6px}
+  .sys-meta{font-size:12px;color:var(--muted);padding-left:24px}
+  .sys-meta.err{color:var(--warn)}
+  .lines{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 2px 24px}
+  .chip{border:0;border-radius:999px;padding:3px 10px 3px 8px;font-size:12px;cursor:pointer;background:#f0f2f5;display:inline-flex;align-items:center;gap:6px;color:var(--ink)}
+  .chip i{width:10px;height:10px;border-radius:50%;background:var(--c);display:inline-block}
+  .chip.off{color:var(--muted);text-decoration:line-through}
+  .chip.off i{opacity:.3}
+  .chip .cnt{color:var(--muted);font-size:11px}
+  .alert-line{font-size:12px;color:var(--warn);padding:4px 0 0 24px}
+  .note{font-size:12px;color:var(--muted);padding:12px 14px;border-top:1px solid var(--rule)}
+
+  .detail{right:12px;top:64px;width:340px;max-height:calc(100vh - 88px)}
+  .detail[hidden]{display:none}
+  .line-tag{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;color:#fff;background:var(--c);font-size:12px;font-weight:500}
+  .d-title{font-size:20px;font-weight:700;line-height:1.3;margin-top:8px}
+  .d-sub{color:var(--muted);font-size:13px}
+  .d-state{margin-top:12px;padding:12px 14px;border-radius:12px;background:#f5f7f9;border-left:4px solid var(--c)}
+  .d-state b{font-size:15px;font-weight:700}
+  .d-state .eta{font-size:26px;font-weight:700;line-height:1.1;margin-top:2px}
+  .d-state .eta small{font-size:13px;font-weight:400;color:var(--muted);margin-left:4px}
+  .d-section{margin-top:14px}
+  .d-section h3{font-size:12px;font-weight:500;color:var(--muted);margin-bottom:6px}
+  .stops{border-top:1px solid var(--rule)}
+  .stops li{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--rule);gap:10px}
+  .stops li .n{display:flex;align-items:center;gap:8px;min-width:0}
+  .stops li .n i{width:8px;height:8px;border-radius:50%;background:var(--c);flex:none}
+  .stops li .n span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stops li .t{font-weight:500;flex:none}
+  .stops li .t.now{color:var(--live)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px;color:var(--muted)}
+  .kv dd{margin:0;color:var(--ink)}
+  .kv dt{white-space:nowrap}
+  .linkish{border:0;background:transparent;color:#2b6cb0;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px}
+  .empty{color:var(--muted);font-size:13px;padding:8px 0}
+
+  /* ---------- markers ---------- */
+  .train-icon{width:24px;height:24px}
+  .train-icon .body{position:absolute;inset:4px;border-radius:5px;background:var(--c);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);transform:rotate(var(--rot,0deg));transition:transform .6s ease;cursor:pointer}
+  .train-icon .body::before{content:"";position:absolute;left:50%;top:-8px;margin-left:-4px;border:4px solid transparent;border-bottom:5px solid #fff;filter:drop-shadow(0 -1px 1px rgba(0,0,0,.25))}
+  .train-icon.at .body{box-shadow:0 1px 4px rgba(0,0,0,.35),0 0 0 6px color-mix(in srgb,var(--c) 28%,transparent)}
+  .train-icon.wait .body{opacity:.55}
+  .train-icon.est .body{border-style:dashed}
+  .train-icon.sel .body{outline:3px solid var(--ink);outline-offset:1px}
+  .leaflet-marker-icon.train-icon.glide{transition:transform 1.2s linear}
+  .leaflet-zoom-anim .leaflet-marker-icon.train-icon.glide{transition:transform .25s cubic-bezier(0,0,.25,1)}
+  .st-label{background:rgba(255,255,255,.85);border:0;box-shadow:none;color:var(--ink);font-family:var(--font);font-size:11px;padding:1px 5px;border-radius:4px;font-weight:500}
+  .st-label::before{display:none}
+  .leaflet-container{font-family:var(--font)}
+  .leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.7)}
+  .leaflet-bottom.leaflet-right .leaflet-control-zoom{margin-bottom:calc(14px + var(--safe-b))}
+
+  .toast{position:fixed;left:50%;bottom:calc(24px + var(--safe-b));transform:translateX(-50%);z-index:1200;background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;box-shadow:var(--shadow);max-width:90vw}
+  .toast[hidden]{display:none}
+
+  /* ---------- mobile ---------- */
+  @media (max-width:760px){
+    .topbar{top:10px;left:10px;right:10px;gap:8px}
+    .brand h1{font-size:14px}
+    .status{display:none}
+    .mobile-only{display:inline-block}
+    .panel{left:0;right:0;top:auto;bottom:0;width:auto;max-height:58vh;border-radius:18px 18px 0 0;padding-bottom:var(--safe-b)}
+    .systems{display:none}
+    .systems.open{display:flex}
+    .detail{z-index:1001}
+    .leaflet-bottom.leaflet-right .leaflet-control-zoom{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .live-dot.on::after{animation:none}
+    .leaflet-marker-icon.train-icon.glide,.train-icon .body{transition:none}
+  }
+</style>
+</head>
+<body>
+<div id="map" aria-label="地圖"></div>
+
+<header class="topbar">
+  <div class="brand"><span class="live-dot" id="liveDot"></span><h1>台灣捷運即時位置圖</h1></div>
+  <div class="status" id="statusText">載入路網資料…</div>
+  <div class="spacer"></div>
+  <button class="btn mobile-only" id="btnSystems" type="button">系統</button>
+  <button class="btn" id="btnRefresh" type="button">立即更新</button>
+</header>
+
+<aside class="panel systems" id="systemsPanel" aria-label="系統與路線">
+  <div class="panel-head"><h2>系統與路線</h2><button class="close mobile-only" id="closeSystems" type="button" aria-label="關閉">×</button></div>
+  <ul class="legend">
+    <li><i class="sw at"></i>停靠／進站中</li>
+    <li><i class="sw"></i>行駛中（實際進站資料推算）</li>
+    <li><i class="sw est"></i>時刻表／班距推估</li>
+  </ul>
+  <div class="panel-body" id="systemsList"></div>
+  <p class="note" id="footNote">臺北捷運：以官方公開的「列車進站站名」資料（每 30 秒）加站間行駛時間推算；其他系統沒有免費即時資料，依時刻表或班距推估。路網資料來自交通部 TDX。</p>
+</aside>
+
+<aside class="panel detail" id="detailPanel" hidden aria-live="polite">
+  <div class="panel-head"><h2 id="detailHead">詳細資料</h2><button class="close" id="closeDetail" type="button" aria-label="關閉">×</button></div>
+  <div class="panel-body" id="detailBody"></div>
+</aside>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ===================== CORE START (純邏輯，無 DOM / Leaflet 相依) ===================== */
+const CORE = (() => {
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+
+  function haversine(a, b) {                       // a,b = [lat,lon] → 公尺
+    const R = 6371000, dLat = toRad(b[0] - a[0]), dLon = toRad(b[1] - a[1]);
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(Math.min(1, s)));
+  }
+  function bearing(a, b) {                          // 由 a 指向 b 的方位角 0~360
+    const y = Math.sin(toRad(b[1] - a[1])) * Math.cos(toRad(b[0]));
+    const x = Math.cos(toRad(a[0])) * Math.sin(toRad(b[0])) - Math.sin(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.cos(toRad(b[1] - a[1]));
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+  function zh(n) { if (!n) return ''; if (typeof n === 'string') return n; return n.Zh_tw || n.En || ''; }
+  function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+  function normColor(c, fallback) {
+    if (!c || typeof c !== 'string') return fallback;
+    c = c.trim(); if (!c) return fallback;
+    if (/^[0-9a-f]{6}$/i.test(c)) return '#' + c;
+    if (/^#[0-9a-f]{3,8}$/i.test(c)) return c;
+    return c;
+  }
+  // 回傳物件裡的第一個陣列（TDX 部分 API 以 {UpdateTime,..., Xxx:[...]} 包裝）
+  function pickArray(d) {
+    if (Array.isArray(d)) return d;
+    if (d && typeof d === 'object') for (const k of Object.keys(d)) if (Array.isArray(d[k])) return d[k];
+    return [];
+  }
+
+  /* ---------- 幾何：WKT / polyline / 投影 ---------- */
+  function parseWKT(wkt) {                           // 回傳 [[ [lat,lon], ... ], ...]
+    if (!wkt || typeof wkt !== 'string') return [];
+    const parts = [];
+    const re = /\(([^()]+)\)/g; let m;
+    while ((m = re.exec(wkt))) {
+      const pts = m[1].split(',').map(s => s.trim().split(/\s+/).map(Number)).filter(p => p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])).map(p => [p[1], p[0]]);
+      if (pts.length >= 2) parts.push(pts);
+    }
+    return parts;
+  }
+  function decodePolyline(str) {                     // Google encoded polyline → [[lat,lon],...]
+    const out = []; let idx = 0, lat = 0, lng = 0;
+    while (idx < str.length) {
+      let b, shift = 0, res = 0;
+      do { b = str.charCodeAt(idx++) - 63; res |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lat += (res & 1) ? ~(res >> 1) : (res >> 1); shift = 0; res = 0;
+      do { b = str.charCodeAt(idx++) - 63; res |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lng += (res & 1) ? ~(res >> 1) : (res >> 1);
+      out.push([lat / 1e5, lng / 1e5]);
+    }
+    return out;
+  }
+  // 把首尾相接的線段接成一條（TDX 的 MULTILINESTRING 常是切段而非支線）
+  function stitchParts(parts, tol = 30) {
+    let remaining = parts.filter(p => p && p.length >= 2).map(p => p.slice());
+    const out = [];
+    while (remaining.length) {
+      let cur = remaining.shift(), changed = true;
+      while (changed) {
+        changed = false;
+        for (let i = 0; i < remaining.length; i++) {
+          const p = remaining[i], cs = cur[0], ce = cur[cur.length - 1], ps = p[0], pe = p[p.length - 1];
+          if (haversine(ce, ps) < tol) cur = cur.concat(p.slice(1));
+          else if (haversine(ce, pe) < tol) cur = cur.concat(p.slice().reverse().slice(1));
+          else if (haversine(cs, pe) < tol) cur = p.concat(cur.slice(1));
+          else if (haversine(cs, ps) < tol) cur = p.slice().reverse().concat(cur.slice(1));
+          else continue;
+          remaining.splice(i, 1); changed = true; break;
+        }
+      }
+      out.push(cur);
+    }
+    return out;
+  }
+  function prepPart(part) {                          // 加上累積里程 part.cum
+    const cum = [0];
+    for (let i = 1; i < part.length; i++) cum.push(cum[i - 1] + haversine(part[i - 1], part[i]));
+    part.cum = cum; return part;
+  }
+  function projectOnPart(part, pt) {                 // 點投影到折線 → {dist, chain, idx}
+    const cosLat = Math.cos(toRad(pt[0]));
+    const X = p => [(p[1] - pt[1]) * 111320 * cosLat, (p[0] - pt[0]) * 110540];
+    let best = { dist: Infinity, chain: 0, idx: 0 };
+    for (let i = 0; i < part.length - 1; i++) {
+      const a = X(part[i]), b = X(part[i + 1]);
+      const dx = b[0] - a[0], dy = b[1] - a[1], len2 = dx * dx + dy * dy;
+      let t = len2 ? (-a[0] * dx - a[1] * dy) / len2 : 0; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(a[0] + t * dx, a[1] + t * dy);
+      if (d < best.dist) best = { dist: d, chain: part.cum[i] + t * (part.cum[i + 1] - part.cum[i]), idx: i };
+    }
+    return best;
+  }
+  function pointAtChain(part, chain) {               // 里程 → {latlng, bearing}
+    const cum = part.cum, total = cum[cum.length - 1];
+    chain = Math.max(0, Math.min(total, chain));
+    let i = 0; while (i < cum.length - 2 && cum[i + 1] < chain) i++;
+    const a = part[i], b = part[i + 1], seg = cum[i + 1] - cum[i];
+    const t = seg > 0 ? (chain - cum[i]) / seg : 0;
+    return { latlng: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], bearing: bearing(a, b) };
+  }
+  function projectStations(line, stations) {         // line.proj[stationId] = {partIdx, chain, dist}
+    line.proj = {};
+    for (const id of line.stationSet) {
+      const st = stations.get(id); if (!st) continue;
+      let best = null;
+      line.parts.forEach((part, partIdx) => {
+        const r = projectOnPart(part, st.latlng);
+        if (!best || r.dist < best.dist) best = { partIdx, chain: r.chain, dist: r.dist };
+      });
+      if (best) line.proj[id] = best;
+    }
+  }
+  // P→S 之間比例 f (0=剛離開 P, 1=到達 S) 的位置
+  function positionBetween(line, stations, P, S, f) {
+    const a = stations.get(P), b = stations.get(S);
+    if (!a || !b) return null;
+    const pp = line.proj[P], ps = line.proj[S];
+    if (pp && ps && pp.partIdx === ps.partIdx && pp.dist < 400 && ps.dist < 400 && Math.abs(ps.chain - pp.chain) > 5) {
+      const part = line.parts[pp.partIdx];
+      const r = pointAtChain(part, pp.chain + (ps.chain - pp.chain) * f);
+      return { latlng: r.latlng, bearing: ps.chain >= pp.chain ? r.bearing : (r.bearing + 180) % 360 };
+    }
+    return { latlng: [a.latlng[0] + (b.latlng[0] - a.latlng[0]) * f, a.latlng[1] + (b.latlng[1] - a.latlng[1]) * f], bearing: bearing(a.latlng, b.latlng) };
+  }
+
+  /* ---------- 路線圖（站間相鄰關係） ---------- */
+  function buildLineGraph(line) {
+    line.hopCache = null;
+    const adj = new Map();
+    const add = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
+    for (const path of line.routes) for (let i = 0; i < path.length - 1; i++) { add(path[i], path[i + 1]); add(path[i + 1], path[i]); }
+    line.adj = adj; line._hop = new Map();
+  }
+  // 以「目的地」為根做 BFS：next(S)=S 往目的地的下一站, dist(S)=距目的地站數
+  function hopMaps(line, dest) {
+    if (!line.hopCache) line.hopCache = new Map();
+    if (line.hopCache.has(dest)) return line.hopCache.get(dest);
+    const r = hopMapsRaw(line, dest); line.hopCache.set(dest, r); return r;
+  }
+  function hopMapsRaw(line, dest) {
+    if (line._hop.has(dest)) return line._hop.get(dest);
+    const next = new Map(), dist = new Map();
+    if (line.adj && line.adj.has(dest)) {
+      next.set(dest, null); dist.set(dest, 0); const q = [dest];
+      while (q.length) { const u = q.shift(); for (const v of line.adj.get(u) || []) if (!next.has(v)) { next.set(v, u); dist.set(v, dist.get(u) + 1); q.push(v); } }
+    }
+    const preds = new Map();
+    for (const [s, n] of next) if (n) { if (!preds.has(n)) preds.set(n, []); preds.get(n).push(s); }
+    const r = { next, dist, preds }; line._hop.set(dest, r); return r;
+  }
+  function runTime(line, stations, A, B) {           // 站間行駛秒數
+    const s = line.s2s && (line.s2s[A + '>' + B] || line.s2s[B + '>' + A]);
+    if (s && s.run > 0) return s.run;
+    const a = stations.get(A), b = stations.get(B);
+    if (a && b) return Math.max(45, haversine(a.latlng, b.latlng) / (line.speed || 10));
+    return 90;
+  }
+
+  /* ---------- 由時刻表建立 ETA 查表 ---------- */
+  // 回傳 Map(stationId → Map(destId → {eta(分), destName, headSign, rec, nextTimes}))
+  const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function serviceDayMatches(sd, dow) {
+    if (!sd || typeof sd !== 'object') return true;
+    const k = DOW[dow]; if (!(k in sd)) return true;
+    return !!sd[k];
+  }
+  function etaLookupFromTimetable(records, now) {
+    const dow = now.getDay(), mins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    const lookup = new Map();
+    for (const r of records) {
+      if (!serviceDayMatches(r.ServiceDay, dow)) continue;
+      const sid = r.StationID, dest = r.DestinationStationID || r.DestinationStaionID; if (!sid || !dest) continue;
+      let best = Infinity, nextTimes = [];
+      for (const t of (r.Timetables || [])) {
+        const s = t.ArrivalTime || t.DepartureTime; if (!s) continue;
+        const [h, m] = String(s).split(':').map(Number); if (!Number.isFinite(h)) continue;
+        let d = h * 60 + m - mins;
+        if (d < -0.75 && h < 4) d += 1440;         // 跨午夜
+        if (d < -0.75) continue;
+        nextTimes.push(d);
+        if (d < best) best = d;
+      }
+      if (best === Infinity) continue;
+      if (!lookup.has(sid)) lookup.set(sid, new Map());
+      const m = lookup.get(sid), cur = m.get(dest);
+      nextTimes.sort((a, b) => a - b);
+      if (!cur || best < cur.eta) m.set(dest, { eta: Math.max(0, best), destName: zh(r.DestinationStationName) || dest, headSign: '', rec: r, nextTimes: nextTimes.slice(0, 4) });
+    }
+    return { lookup, unitSec: false };
+  }
+
+  /* ---------- 核心：由各站 ETA 推算列車位置 ---------- */
+  // 原理：沿行駛方向看，同一列車在各站的 ETA 會遞增；ETA 突然變小的站，前方就有一列車。
+  function inferTrainsForLine(line, stations, lookup, source, srcTime) {
+    const byDest = new Map();
+    for (const [sid, dests] of lookup) for (const [dest, info] of dests) {
+      if (!line.stationSet.has(sid)) continue;
+      if (!byDest.has(dest)) byDest.set(dest, new Map());
+      byDest.get(dest).set(sid, info);
+    }
+    const trains = [];
+    for (const [dest, etas] of byDest) {
+      if (!line.adj || !line.adj.has(dest)) continue;   // 目的地不在此路線（直通／代碼不符）
+      const { next, dist, preds } = hopMaps(line, dest);
+      for (const [S, info] of etas) {
+        if (S === dest || !next.has(S)) continue;
+        const eta = info.eta;
+        const predsAll = preds.get(S) || [];
+        const withData = predsAll.filter(p => etas.has(p));
+        let isStart = false, P = null, status = 'moving';
+        if (eta <= 0.05) { isStart = true; status = 'at'; P = withData[0] || predsAll[0] || null; }
+        else if (!predsAll.length) { isStart = true; status = 'wait'; }       // 起點站，尚未發車
+        else if (withData.length) {
+          if (withData.every(p => etas.get(p).eta > eta)) { isStart = true; P = withData.reduce((a, b) => etas.get(a).eta >= etas.get(b).eta ? a : b); }
+        } else {
+          P = predsAll[0];
+          if (eta * 60 <= runTime(line, stations, P, S) + 90) isStart = true;
+        }
+        if (!isStart) continue;
+        // 若來源是整分倒數（source='live'），真實剩餘時間落在 [eta, eta+1)；用中點估位置
+        const granular = source === 'live' && Number.isInteger(eta) && eta > 0;
+        const rt = P ? Math.max(30, runTime(line, stations, P, S)) : 90;
+        let f = 1, fMin = 1, fMax = 1;
+        if (status === 'moving' && P) {
+          fMax = 1 - (eta * 60) / rt;
+          fMin = granular ? 1 - ((eta + 1) * 60) / rt : fMax;
+          f = granular ? 1 - ((eta + 0.5) * 60) / rt : fMax;
+          const clamp = v => Math.max(0.04, Math.min(0.97, v));
+          f = clamp(f); fMin = clamp(fMin); fMax = clamp(fMax);
+        }
+        // 之後停靠站（沿 next 鏈，ETA 遞增者屬於同一列車）
+        const upcoming = [{ station: S, eta }];
+        let n = next.get(S), prev = eta;
+        while (n && upcoming.length < 8) { const inf = etas.get(n); if (!inf || inf.eta < prev) break; upcoming.push({ station: n, eta: inf.eta }); prev = inf.eta; n = next.get(n); }
+        const d = dist.get(S) || 0;
+        trains.push({
+          lineKey: line.key, sys: line.sys, lineId: line.id, dest, destName: info.destName, headSign: info.headSign,
+          at: status === 'moving' ? null : S, from: status === 'moving' ? P : null, to: S, f, fMin, fMax, rt, eta, status, source, srcTime,
+          upcoming, pos: -(d + (1 - f)), nextStop: status === 'moving' ? S : (next.get(S) || null), facing: next.get(S) || null, backOf: P
+        });
+      }
+    }
+    return trains;
+  }
+
+  /* ---------- 臺北捷運公開「列車進站站名」資料（免金鑰、每 30 秒）→ 追蹤全部列車 ---------- */
+  // 資料只說「現在哪個月台有列車、往哪裡」；列車離開月台後，用站間行駛時間推算它在兩站之間的位置，
+  // 直到它在下一站的月台再出現為止；若在下一站沒被看到（進出站剛好落在兩次更新之間），繼續往前推最多兩站。
+  const normName = s => String(s || '').replace(/臺/g, '台').replace(/[\s()（）]/g, '').replace(/站$/, '').toLowerCase();
+  function buildNameIndex(S) {                        // 站名 → [{line, id}]
+    const idx = new Map();
+    const add = (k, v) => { if (!k) return; if (!idx.has(k)) idx.set(k, []); idx.get(k).push(v); };
+    for (const line of S.lines.values()) for (const id of line.stationSet) {
+      const st = S.stations.get(id); if (!st) continue;
+      add(normName(st.name), { line, id });
+      const en = st.raw && st.raw.StationName && st.raw.StationName.En; if (en) add(normName(en), { line, id });
+    }
+    return idx;
+  }
+  function resolvePlatformRecord(idx, rec, prefer) { // 一筆「Station 往 Destination」→ {line, sid, dest}
+    const sName = rec.Station ?? rec.StationName ?? rec.station, dName = rec.Destination ?? rec.DestinationName ?? rec.destination;
+    const sList = idx.get(normName(sName)) || idx.get(normName(rec.StationEn)) || [];
+    const dList = idx.get(normName(dName)) || idx.get(normName(rec.DestinationEn)) || [];
+    const cands = [];
+    for (const a of sList) for (const b of dList) if (a.line === b.line) cands.push({ line: a.line, sid: a.id, dest: b.id });
+    if (!cands.length) return null;
+    cands.sort((a, b) => a.line.id.localeCompare(b.line.id));
+    let pick = 0;                                     // 兩條線都符合時（如忠孝復興→南港展覽館）：優先選「正有列車要到這站」的那條線
+    if (cands.length > 1 && prefer) { const i = prefer(cands); if (i >= 0) pick = i; }
+    return { line: cands[pick].line, sid: cands[pick].sid, dest: cands[pick].dest, ambiguous: cands.length > 1 };
+  }
+  function createPlatformTracker() { return { seenAt: new Map(), moving: new Map(), seq: 1, lastFeedTime: null, unresolved: 0 }; }
+  function parseTime(s) {                            // "2024-06-24 10:00:00" / ISO → ms（無時區視為台灣時間）
+    if (!s) return null; if (typeof s === 'number') return s;
+    let t = String(s).trim().replace(' ', 'T'); if (!/[zZ]|[+-]\d\d:?\d\d$/.test(t)) t += '+08:00';
+    const v = Date.parse(t); return Number.isFinite(v) ? v : null;
+  }
+  function platformUpdate(tracker, S, idx, records, feedTime, now, dwellSec = 30) {
+    const T = feedTime || now;
+    if (tracker.lastFeedTime !== T) {
+      const cur = new Map(); let unresolved = 0;
+      const prefer = cands => { let i = cands.findIndex(c => tracker.seenAt.has(c.line.key + '|' + c.sid + '|' + c.dest)); if (i < 0) i = cands.findIndex(c => [...tracker.moving.values()].some(m => m.line === c.line && m.dest === c.dest && (m.to === c.sid || m.from === c.sid))); return i; };
+      for (const rec of records) { const r = resolvePlatformRecord(idx, rec, prefer); if (!r) { unresolved++; continue; } cur.set(r.line.key + '|' + r.sid + '|' + r.dest, r); }
+      tracker.unresolved = unresolved;
+      for (const [key, r] of cur) {                    // 現在在月台的列車
+        const prev = tracker.seenAt.get(key); if (prev) { prev.lastSeen = T; continue; }
+        let uid = null;                                // 新出現：多半是推算中的列車剛到站
+        for (const [mk, m] of tracker.moving) { if (m.line === r.line && m.dest === r.dest && (m.to === r.sid || m.from === r.sid)) { uid = m.uid; tracker.moving.delete(mk); break; } }
+        tracker.seenAt.set(key, { uid: uid || tracker.seq++, line: r.line, sid: r.sid, dest: r.dest, ambiguous: r.ambiguous, firstSeen: T, lastSeen: T });
+      }
+      for (const [key, sa] of tracker.seenAt) {         // 從月台消失 → 開始往下一站推算
+        if (cur.has(key)) continue;
+        tracker.seenAt.delete(key);
+        const to = hopMaps(sa.line, sa.dest).next.get(sa.sid) || null; if (!to) continue;   // 終點站
+        tracker.moving.set(String(sa.uid), { uid: sa.uid, line: sa.line, dest: sa.dest, from: sa.sid, to, departedAt: T - 15000, hops: 0 });
+      }
+      tracker.lastFeedTime = T;
+    }
+    for (const [mk, m] of tracker.moving) {             // 站間時間＋停靠時間過後仍未在下一站出現 → 視為已過站，繼續往前（最多兩站）
+      let guard = 0;
+      while (guard++ < 4) {
+        const rt = runTime(m.line, S.stations, m.from, m.to) * 1000;
+        if (now - m.departedAt <= rt + dwellSec * 1000 + 15000) break;
+        const to = hopMaps(m.line, m.dest).next.get(m.to);
+        if (!to || ++m.hops > 2) { tracker.moving.delete(mk); break; }
+        m.departedAt += rt + dwellSec * 1000; m.from = m.to; m.to = to;
+      }
+    }
+    const trains = [], nm = id => (S.stations.get(id) || {}).name || id;
+    for (const sa of tracker.seenAt.values()) {
+      const { next, dist } = hopMaps(sa.line, sa.dest), facing = next.get(sa.sid) || null;
+      const upcoming = [{ station: sa.sid, eta: 0 }]; if (facing) upcoming.push({ station: facing, eta: runTime(sa.line, S.stations, sa.sid, facing) / 60 });
+      trains.push({ id: 'p:' + sa.uid, lineKey: sa.line.key, sys: sa.line.sys, lineId: sa.line.id, dest: sa.dest, destName: nm(sa.dest), headSign: '',
+        status: 'at', at: sa.sid, from: null, to: sa.sid, f: 1, fMin: 1, fMax: 1, rt: 0, eta: 0, source: 'platform', srcTime: T, dwellSince: sa.firstSeen,
+        upcoming, pos: -(dist.get(sa.sid) || 0), nextStop: facing, facing, backOf: null, ambiguous: sa.ambiguous });
+    }
+    for (const m of tracker.moving.values()) {
+      const rt = Math.max(30, runTime(m.line, S.stations, m.from, m.to)), age = (now - m.departedAt) / 1000;
+      const { next, dist } = hopMaps(m.line, m.dest), after = next.get(m.to) || null;
+      const base = { id: 'p:' + m.uid, lineKey: m.line.key, sys: m.line.sys, lineId: m.line.id, dest: m.dest, destName: nm(m.dest), headSign: '', source: 'platform', srcTime: T, hops: m.hops, facing: after, backOf: m.from };
+      if (age >= rt) {                                   // 應已抵達下一站，但進站資料還沒更新 → 先當作停靠中（預測）
+        const upcoming = [{ station: m.to, eta: 0 }]; if (after) upcoming.push({ station: after, eta: runTime(m.line, S.stations, m.to, after) / 60 });
+        trains.push({ ...base, status: 'at', predicted: true, at: m.to, from: null, to: m.to, f: 1, fMin: 1, fMax: 1, rt: 0, eta: 0, upcoming, pos: -(dist.get(m.to) || 0), nextStop: after });
+        continue;
+      }
+      const f = Math.max(0.02, Math.min(0.98, age / rt)), eta = Math.max(0, rt * (1 - f)) / 60;
+      const upcoming = [{ station: m.to, eta }]; if (after) upcoming.push({ station: after, eta: eta + dwellSec / 60 + runTime(m.line, S.stations, m.to, after) / 60 });
+      trains.push({ ...base, status: 'moving', at: null, from: m.from, to: m.to, f, fMin: 0.02, fMax: 0.98, rt, eta, departedAt: m.departedAt, upcoming, pos: -((dist.get(m.to) || 0) + (1 - f)), nextStop: m.to });
+    }
+    return trains;
+  }
+
+  /* ---------- 沒有時刻表的系統：用「首末班車＋班距」合成一份今天的站別時刻表 ---------- */
+  const hhmm = m => String(Math.floor((m % 1440) / 60)).padStart(2, '0') + ':' + String(Math.floor(m % 60)).padStart(2, '0');
+  const toMin = t => { const [h, m] = String(t || '').split(':').map(Number); return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null; };
+  function synthTimetable(S, firstLast, freq, now, defaultHeadway = 8) {
+    const dow = now.getDay(), out = []; let usedDefault = false;
+    const destOf = r => r.DestinationStationID || r.DestinationStaionID || null;
+    for (const line of S.lines.values()) for (const path of line.routes) {
+      if (path.length < 2) continue;
+      const O = path[0], D = path[path.length - 1];
+      const fl = firstLast.filter(r => r.StationID === O && (!r.LineID || r.LineID === line.id) && serviceDayMatches(r.ServiceDay, dow) && (destOf(r) === D || (!destOf(r) && normName(zh(r.DestinationStationName) || r.TripHeadSign).includes(normName((S.stations.get(D) || {}).name)))));
+      const rec = fl[0]; if (!rec) continue;
+      const first = toMin(rec.FirstTrainTime), lastRaw = toMin(rec.LastTrainTime); if (first == null || lastRaw == null) continue;
+      const last = lastRaw < first ? lastRaw + 1440 : lastRaw;
+      const fq = freq.filter(r => (!r.LineID || r.LineID === line.id) && serviceDayMatches(r.ServiceDay, dow) && (!destOf(r) || destOf(r) === D) && (destOf(r) || !r.TripHeadSign || normName(r.TripHeadSign).includes(normName((S.stations.get(D) || {}).name))));
+      const headways = []; for (const r of fq) for (const h of (r.Headways || r.Frequencys || [])) { const a = toMin(h.StartTime), b = toMin(h.EndTime); const mn = num(h.MinHeadwayMins), mx = num(h.MaxHeadwayMins); if (a == null || b == null) continue; headways.push({ a, b: b < a ? b + 1440 : b, h: ((mn ?? mx) + (mx ?? mn)) / 2 || defaultHeadway }); }
+      const inWin = (m, h, incl) => (m >= h.a && (incl ? m <= h.b : m < h.b)) || (m - 1440 >= h.a && (incl ? m - 1440 <= h.b : m - 1440 < h.b));
+      const headwayAt = m => { const x = headways.find(h => inWin(m, h, false)) || headways.find(h => inWin(m, h, true)); if (!x) usedDefault = true; return x ? x.h : defaultHeadway; };
+      const cum = [0]; for (let i = 0; i < path.length - 1; i++) { const e = line.s2s[path[i] + '>' + path[i + 1]]; cum.push(cum[i] + (e ? e.run + (e.stop || 0) : runTime(line, S.stations, path[i], path[i + 1]) + 25)); }
+      const deps = []; for (let m = first, g = 0; m <= last && g < 600; g++) { deps.push(m); m += Math.max(2, headwayAt(m)); }
+      path.forEach((sid, i) => {
+        if (i === path.length - 1) return;
+        out.push({ LineID: line.id, StationID: sid, DestinationStationID: D, DestinationStationName: (S.stations.get(D) || {}).name, ServiceDay: null, synthetic: true,
+          Timetables: deps.map((d, k) => ({ Sequence: k + 1, TrainNo: line.id + '-' + D + '-' + (k + 1), ArrivalTime: hhmm(d + cum[i] / 60) })) });
+      });
+    }
+    return { records: out, usedDefault };
+  }
+
+  // 新舊列車配對（同路線同方向、位置只前進一小段者視為同一列）→ 讓 marker 平滑移動
+  function matchTrains(prev, cur) {
+    const used = new Set();
+    for (const t of cur) {
+      if (t.id) { const same = prev.find(o => o.id === t.id && !used.has(o.uid)); if (same) { t.uid = same.uid; used.add(same.uid); } continue; }
+      let best = null;
+      for (const o of prev) {
+        if (used.has(o.uid) || o.lineKey !== t.lineKey || o.dest !== t.dest || o.pos == null) continue;
+        const dlt = t.pos - o.pos;
+        if (dlt >= -0.15 && dlt <= 1.6 && (!best || o.pos > best.pos)) best = o;
+      }
+      if (best) { t.uid = best.uid; used.add(best.uid); }
+    }
+    return cur;
+  }
+
+  /* ---------- 示範資料（?mock=1）：模擬三個系統 ---------- */
+  function makeMock(speed = 1) {
+    const t0 = Date.now();
+    const mkStations = (prefix, name, pts) => pts.map((p, i) => ({ StationID: prefix + String(i + 1).padStart(2, '0'), StationName: { Zh_tw: name[i], En: prefix + (i + 1) }, StationPosition: { PositionLat: p[0], PositionLon: p[1] } }));
+    const A = mkStations('G', ['北屯總站', '舊社', '松竹', '四維國小', '文心崇德', '文心中清', '文華高中', '文心櫻花', '市政府', '水安宮', '文心森林公園', '南屯', '豐樂公園', '大慶', '九張犁', '九德', '烏日', '高鐵台中站'],
+      [[24.1832, 120.7106], [24.1743, 120.7075], [24.1706, 120.6997], [24.1693, 120.6933], [24.1653, 120.6858], [24.1612, 120.6828], [24.1554, 120.6809], [24.1483, 120.6755], [24.1409, 120.6730], [24.1350, 120.6710], [24.1310, 120.6660], [24.1262, 120.6614], [24.1219, 120.6572], [24.1178, 120.6528], [24.1132, 120.6478], [24.1050, 120.6392], [24.1012, 120.6285], [24.1076, 120.6153]]);
+    const B = mkStations('T', ['台中車站', '干城', '中興', '文心', '朝馬', '台中港'],
+      [[24.1367, 120.6851], [24.1400, 120.6900], [24.1450, 120.6650], [24.1500, 120.6500], [24.1580, 120.6380], [24.2500, 120.5300]]);
+    const C = mkStations('F', ['豐原', '潭子', '北屯', '太原', '精武'],
+      [[24.2540, 120.7230], [24.2160, 120.7080], [24.1830, 120.6980], [24.1600, 120.6930], [24.1440, 120.6900]]);
+    const wkt = arr => 'LINESTRING(' + arr.map(s => s.StationPosition.PositionLon + ' ' + s.StationPosition.PositionLat).join(',') + ')';
+    const routes = (lineId, sts) => [
+      { RouteID: lineId + '-1', LineID: lineId, Direction: 0, Stations: sts.map((s, i) => ({ Sequence: i + 1, StationID: s.StationID, StationName: s.StationName })) },
+      { RouteID: lineId + '-2', LineID: lineId, Direction: 1, Stations: sts.slice().reverse().map((s, i) => ({ Sequence: i + 1, StationID: s.StationID, StationName: s.StationName })) }];
+    const s2s = (lineId, sts, run) => [0, 1].map(dir => { const o = dir ? sts.slice().reverse() : sts; return { LineID: lineId, RouteID: lineId + '-' + (dir + 1), TravelTimes: o.slice(0, -1).map((s, i) => ({ Sequence: i + 1, FromStationID: s.StationID, ToStationID: o[i + 1].StationID, RunTime: run, StopTime: 25 })) }; });
+    const hop = 110, dwell = 25, cyc = A.length - 1, period = (hop + dwell) * cyc * 2;   // A 線一來回
+    const simNow = () => 30 + (Date.now() - t0) / 1000 * speed;   // 從 30 秒起算，一開始就有列車在月台
+    // A：模擬「列車進站站名」公開資料（每 30 秒一張快照；只列出正停在月台的列車）
+    function platformFeedA() {
+      const snap = Math.floor(simNow() / 30) * 30, recs = [];
+      for (let k = 0; k < 12; k++) {
+        const tp = (snap + k * 360) % period, dir = tp < period / 2 ? 0 : 1, local = dir ? tp - period / 2 : tp;
+        const order = dir ? A.slice().reverse() : A, dest = order[order.length - 1];
+        const i = Math.floor(local / (hop + dwell)), phase = local - i * (hop + dwell);
+        if (phase >= hop && i + 1 < order.length) recs.push({ Station: zh(order[i + 1].StationName), StationEn: order[i + 1].StationName.En, Destination: zh(dest.StationName), DestinationEn: dest.StationName.En, UpdateTime: new Date(t0 + (snap - 30) / speed * 1000).toISOString() });
+      }
+      return recs;
+    }
+    function timetableB() {
+      const recs = [];
+      for (let dir = 0; dir < 2; dir++) {
+        const order = dir === 0 ? B : B.slice().reverse(); const dest = order[order.length - 1];
+        order.forEach((s, i) => {
+          if (i === order.length - 1) return;
+          const times = []; let seq = 1;
+          for (let m = 6 * 60 + i * 4; m < 24 * 60; m += 8) times.push({ Sequence: seq++, TrainNo: String(seq), ArrivalTime: String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') });
+          recs.push({ LineID: 'T', StationID: s.StationID, StationName: s.StationName, Direction: dir, DestinationStationID: dest.StationID, DestinationStationName: dest.StationName, ServiceDay: { Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true }, Timetables: times });
+        });
+      }
+      return recs;
+    }
+    const allDays = { Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true };
+    const firstLastC = [0, 1].map(dir => { const o = dir ? C.slice().reverse() : C; return { LineID: 'F', StationID: o[0].StationID, DestinationStationID: o[o.length - 1].StationID, DestinationStationName: o[o.length - 1].StationName, FirstTrainTime: '06:00', LastTrainTime: '00:00', ServiceDay: allDays }; });
+    const frequencyC = [0, 1].map(dir => { const o = dir ? C.slice().reverse() : C; return { LineID: 'F', DestinationStationID: o[o.length - 1].StationID, ServiceDay: allDays, Headways: [{ StartTime: '06:00', EndTime: '09:00', MinHeadwayMins: 4, MaxHeadwayMins: 6 }, { StartTime: '09:00', EndTime: '17:00', MinHeadwayMins: 8, MaxHeadwayMins: 10 }, { StartTime: '17:00', EndTime: '24:00', MinHeadwayMins: 5, MaxHeadwayMins: 7 }] }; });
+    const data = {
+      MOCKA: { Line: [{ LineID: 'G', LineName: { Zh_tw: '示範綠線' }, LineColor: '#5cb531' }], Station: A, StationOfRoute: routes('G', A), StationOfLine: [], Shape: [{ LineID: 'G', Geometry: wkt(A) }], S2STravelTime: s2s('G', A, hop) },
+      MOCKB: { Line: [{ LineID: 'T', LineName: { Zh_tw: '示範橘線' }, LineColor: '#f8b62b' }], Station: B, StationOfRoute: routes('T', B), StationOfLine: [], Shape: [{ LineID: 'T', Geometry: wkt(B) }], S2STravelTime: [], StationTimeTable: timetableB() },
+      MOCKC: { Line: [{ LineID: 'F', LineName: { Zh_tw: '示範紅線' }, LineColor: '#d0021b' }], Station: C, StationOfRoute: routes('F', C), StationOfLine: [], Shape: [{ LineID: 'F', Geometry: wkt(C) }], S2STravelTime: s2s('F', C, 150), StationTimeTable: [], FirstLastTimetable: firstLastC, Frequency: frequencyC }
+    };
+    return {
+      async static(sys, kind) { await new Promise(r => setTimeout(r, 60)); const d = data[sys]; return d && kind in d ? d[kind] : null; },
+      async live(sys) { await new Promise(r => setTimeout(r, 60)); if (sys !== 'MOCKA') throw new Error('mock 無此系統即時資料'); return platformFeedA(); },
+      index() { return { generatedAt: new Date().toISOString(), mock: true }; }
+    };
+  }
+
+  return { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectOnPart, pointAtChain, projectStations, positionBetween,
+    buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
+    normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable };
+})();
+/* ===================== CORE END ===================== */
+
+/* ===================== APP（地圖、資料載入、UI） ===================== */
+const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectStations, positionBetween,
+  buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
+  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable } = CORE;
+
+/* ===== 設定（只需要改這裡） ===== */
+const CONFIG = {
+  dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
+  liveProxy: ''         // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+                        // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
+};
+
+const Q = new URLSearchParams(location.search);
+const MOCK = Q.get('mock') === '1';
+const DATA_BASE = (Q.get('data') || CONFIG.dataBase).replace(/\/$/, '');
+const LIVE_PROXY = (Q.get('proxy') ?? (CONFIG.liveProxy || (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? '/live' : ''))).replace(/\/$/, '');
+const REFRESH_MS = Math.max(8000, (Number(Q.get('refresh')) || 15) * 1000);
+
+// live:'platform' = 有免費的「列車進站」即時公開資料；其他系統依 data/ 內有無時刻表自動選擇：時刻表推估 → 首末班車＋班距模擬 → 僅畫路線
+const SYSTEMS = [
+  { id: 'TRTC',   name: '臺北捷運', color: '#1c2430', live: 'platform', src: 'trtc', feed: 'https://tcgmetro.blob.core.windows.net/stationnames/stations.json' },
+  { id: 'NTMC',   name: '新北捷運', color: '#c48c2b' },
+  { id: 'NTDLRT', name: '淡海輕軌', color: '#2e8b57', speed: 7 },
+  { id: 'NTALRT', name: '安坑輕軌', color: '#7b5ea7', speed: 7 },
+  { id: 'TYMC',   name: '桃園捷運', color: '#8a5ba6' },
+  { id: 'TMRT',   name: '臺中捷運', color: '#5cb531' },
+  { id: 'KRTC',   name: '高雄捷運', color: '#d0021b' },
+  { id: 'KLRT',   name: '高雄輕軌', color: '#7fb800', speed: 7 },
+];
+const MOCK_SYSTEMS = [
+  { id: 'MOCKA', name: '示範系統 A（進站資料推算）', color: '#5cb531', live: 'platform', src: 'mocka' },
+  { id: 'MOCKB', name: '示範系統 B（時刻表推估）', color: '#f8b62b' },
+  { id: 'MOCKC', name: '示範系統 C（班距模擬）', color: '#d0021b' },
+];
+const ACTIVE_SYSTEMS = MOCK ? MOCK_SYSTEMS : SYSTEMS;
+const mock = MOCK ? makeMock(Number(Q.get('speed')) || 1) : null;
+
+const state = { systems: {}, trains: [], prevTrains: [], markers: new Map(), uidSeq: 1, selected: null, nextRefreshAt: 0, lastLiveAt: null, refreshing: false, liveOk: false, dataInfo: null };
+
+// 靜態資料：data/<系統>/<種類>.json（404 → null）
+async function loadStatic(sys, kind) {
+  if (mock) return mock.static(sys, kind);
+  const res = await fetch(`${DATA_BASE}/${sys}/${kind}.json`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${kind}`);
+  return res.json();
+}
+// 即時資料：直接抓公開來源，或經免費代理（?src=）
+async function bufToText(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8[0] === 0x1f && u8[1] === 0x8b && typeof DecompressionStream === 'function') {
+    const ds = new DecompressionStream('gzip'); const w = ds.writable.getWriter(); w.write(u8); w.close();
+    return new Response(ds.readable).text();
+  }
+  return new TextDecoder('utf-8').decode(u8);
+}
+async function fetchLive(cfg) {
+  if (mock) return mock.live(cfg.id);
+  const url = LIVE_PROXY ? `${LIVE_PROXY}${LIVE_PROXY.includes('?') ? '&' : '?'}src=${encodeURIComponent(cfg.src)}` : cfg.feed;
+  let res;
+  try { res = await fetch(url, { cache: 'no-store' }); }
+  catch (e) { throw new Error(LIVE_PROXY ? `連不到代理 ${LIVE_PROXY}` : '瀏覽器直接讀取公開資料被擋（CORS）。請照 README 建立免費的 Cloudflare Worker 代理，填入 CONFIG.liveProxy'); }
+  if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`HTTP ${res.status}${t ? ' ' + t.slice(0, 80) : ''}`); }
+  const text = (await bufToText(await res.arrayBuffer())).replace(/^\uFEFF/, '');
+  return pickArray(JSON.parse(text));
+}
+
+/* ---------- 地圖 ---------- */
+const isMobile = () => window.matchMedia('(max-width:760px)').matches;
+const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([23.75, 120.95], isMobile() ? 7 : 8);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> · 資料 <a href="https://data.taipei/">臺北捷運</a>／<a href="https://tdx.transportdata.tw/">TDX</a>',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+map.createPane('lines').style.zIndex = 410;
+map.createPane('stations').style.zIndex = 430;
+map.createPane('trains').style.zIndex = 640;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtTime = v => { if (!v) return '—'; const d = typeof v === 'number' ? new Date(v) : new Date(v); return isNaN(d) ? String(v) : d.toLocaleTimeString('zh-TW', { hour12: false }); };
+const fmtEta = m => m <= 0.05 ? '進站中' : m < 1 ? '1 分內' : Math.round(m) + ' 分';
+const lineByKey = key => { if (!key) return null; const i = key.indexOf(':'); const S = state.systems[key.slice(0, i)]; return S ? S.lines.get(key.slice(i + 1)) : null; };
+let toastTimer = null;
+function toast(msg, ms = 4000) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, ms); }
+
+/* ---------- 載入路網 ---------- */
+async function loadSystem(cfg) {
+  const S = state.systems[cfg.id] = {
+    cfg, lines: new Map(), stations: new Map(), status: 'loading', err: null, timetable: null, ttSource: null, simNote: '', simDay: null, mode: 'none', trains: [], visible: true,
+    live: { feed: [], feedTime: null, srcTime: null, feedErr: null }, tracker: createPlatformTracker(), nameIdx: null,
+    layers: { lines: L.layerGroup().addTo(map), stations: L.layerGroup().addTo(map), trains: L.layerGroup().addTo(map) }
+  };
+  renderSystems();
+  try {
+    const get = k => loadStatic(cfg.id, k).catch(() => null);
+    const [lines, stations, routes, sol, shapes, s2s] = await Promise.all(['Line', 'Station', 'StationOfRoute', 'StationOfLine', 'Shape', 'S2STravelTime'].map(get));
+    if (!lines || !stations) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json（請先執行 GitHub Actions「更新靜態資料」）`);
+    buildSystem(S, lines, stations, routes, sol || [], shapes || [], s2s || []);
+    if (!S.lines.size) throw new Error('沒有路線資料');
+    if (cfg.live === 'platform') { S.mode = 'platform'; S.nameIdx = buildNameIndex(S); }
+    else await loadTimetable(S, get);
+    S.status = 'ok';
+  } catch (e) { S.status = 'error'; S.err = e.message; }
+  renderSystems();
+}
+// 沒有即時資料的系統：站別時刻表 → 沒有的話用「首末班車＋班距」合成 → 都沒有就只畫路線
+async function loadTimetable(S, get) {
+  const tt = await get('StationTimeTable'); const arr = tt ? pickArray(tt) : [];
+  if (arr.length) { S.timetable = arr; S.ttSource = 'timetable'; S.mode = 'timetable'; deriveS2SFromTimetable(S); return; }
+  const [fl, fq] = await Promise.all([get('FirstLastTimetable'), get('Frequency')]);
+  S.firstLast = fl ? pickArray(fl) : []; S.frequency = fq ? pickArray(fq) : [];
+  rebuildSim(S);
+}
+function rebuildSim(S) {
+  const now = new Date();
+  const { records, usedDefault } = synthTimetable(S, S.firstLast || [], S.frequency || [], now);
+  S.simDay = now.toDateString();
+  if (records.length) { S.timetable = records; S.ttSource = 'sim'; S.mode = 'sim'; S.simNote = usedDefault ? '（無班距資料，以 8 分估）' : ''; }
+  else { S.timetable = null; S.ttSource = null; S.mode = 'none'; }
+}
+
+function buildSystem(S, lines, stations, routes, sol, shapes, s2s) {
+  const sys = S.cfg.id;
+  for (const st of pickArray(stations)) {
+    const p = st.StationPosition || {}; const lat = num(p.PositionLat), lon = num(p.PositionLon);
+    if (lat == null || lon == null || !lat || !st.StationID) continue;
+    S.stations.set(st.StationID, { id: st.StationID, name: zh(st.StationName) || st.StationID, latlng: [lat, lon], lines: new Set(), raw: st });
+  }
+  for (const ln of pickArray(lines)) {
+    const id = ln.LineID || ln.LineNo; if (!id) continue;
+    S.lines.set(id, { key: sys + ':' + id, sys, id, name: zh(ln.LineName) || id, color: normColor(ln.LineColor, S.cfg.color), routes: [], stations: [], stationSet: new Set(), parts: [], proj: {}, s2s: {}, speed: S.cfg.speed || 10, hidden: false, visible: true, alsoIn: [] });
+  }
+  const guessLine = rid => { if (!rid) return null; const s = String(rid); for (const id of S.lines.keys()) if (s === id || s.startsWith(id + '-') || s.startsWith(id + '_')) return id; return null; };
+  const seqIds = arr => (arr || []).slice().sort((a, b) => (num(a.Sequence) || 0) - (num(b.Sequence) || 0)).map(x => x.StationID).filter(id => S.stations.has(id));
+  for (const r of pickArray(routes)) {
+    const line = S.lines.get(r.LineID) || S.lines.get(guessLine(r.RouteID)); if (!line) continue;
+    const ids = seqIds(r.Stations); if (ids.length >= 2) line.routes.push(ids);
+  }
+  for (const r of pickArray(sol)) {
+    const line = S.lines.get(r.LineID) || S.lines.get(r.LineNo); if (!line) continue;
+    const ids = seqIds(r.Stations); if (!ids.length) continue;
+    line.stations = ids; if (!line.routes.length && ids.length >= 2) line.routes.push(ids);
+  }
+  for (const line of S.lines.values()) {
+    for (const p of line.routes) p.forEach(id => line.stationSet.add(id));
+    line.stations.forEach(id => line.stationSet.add(id));
+    if (!line.stations.length) line.stations = [...line.stationSet];
+    for (const id of line.stationSet) S.stations.get(id).lines.add(line.key);
+    buildLineGraph(line);
+  }
+  for (const sh of pickArray(shapes)) {
+    const line = S.lines.get(sh.LineID) || S.lines.get(sh.LineNo) || S.lines.get(guessLine(sh.RouteID)); if (!line) continue;
+    let parts = parseWKT(sh.Geometry);
+    if (!parts.length && sh.EncodedPolyline) { try { parts = [decodePolyline(sh.EncodedPolyline)]; } catch (e) { parts = []; } }
+    line.parts.push(...parts);
+  }
+  for (const rec of pickArray(s2s)) {
+    const line = S.lines.get(rec.LineID) || S.lines.get(guessLine(rec.RouteID)); if (!line) continue;
+    for (const t of (rec.TravelTimes || [])) {
+      const run = num(t.RunTime); if (!t.FromStationID || !t.ToStationID || run == null) continue;
+      line.s2s[t.FromStationID + '>' + t.ToStationID] = { run, stop: num(t.StopTime) || 0 };
+    }
+  }
+  for (const line of S.lines.values()) { line.parts = stitchParts(line.parts).map(prepPart); projectStations(line, S.stations); }
+}
+
+// 時刻表若附 TrainNo，可用同一車次在相鄰兩站的時刻差，推得站間行駛秒數（中位數）
+function deriveS2SFromTimetable(S) {
+  const toMin = t => { const [h, m] = String(t || '').split(':').map(Number); return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null; };
+  const byTrain = new Map();   // dest|TrainNo|ServiceTag → Map(stationId → min)
+  for (const r of S.timetable) {
+    const dest = r.DestinationStationID || r.DestinationStaionID; if (!dest || !r.StationID) continue;
+    const tag = r.ServiceDay && (r.ServiceDay.ServiceTag || Object.keys(r.ServiceDay).filter(k => r.ServiceDay[k] === true).join('')) || '';
+    for (const t of (r.Timetables || [])) {
+      if (t.TrainNo == null) continue; const m = toMin(t.ArrivalTime || t.DepartureTime); if (m == null) continue;
+      const k = dest + '|' + t.TrainNo + '|' + tag; if (!byTrain.has(k)) byTrain.set(k, new Map()); byTrain.get(k).set(r.StationID, m);
+    }
+  }
+  if (!byTrain.size) return;
+  for (const line of S.lines.values()) for (const path of line.routes) for (let i = 0; i < path.length - 1; i++) {
+    const A = path[i], B = path[i + 1]; if (line.s2s[A + '>' + B]) continue;
+    const diffs = [];
+    for (const m of byTrain.values()) { if (m.has(A) && m.has(B)) { const d = m.get(B) - m.get(A); if (d > 0 && d < 30) diffs.push(d); } }
+    if (diffs.length >= 3) { diffs.sort((a, b) => a - b); line.s2s[A + '>' + B] = { run: diffs[Math.floor(diffs.length / 2)] * 60, stop: 0, fromTimetable: true }; }
+  }
+}
+// 同一條線同時出現在兩個系統（例如環狀線在臺北／新北捷運資料都有）時只畫一次
+function dedupeSharedLines() {
+  const ids = ACTIVE_SYSTEMS.map(c => c.id);
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    const A = state.systems[ids[i]], B = state.systems[ids[j]]; if (!A || !B || A.status !== 'ok' || B.status !== 'ok') continue;
+    for (const bl of B.lines.values()) {
+      const al = A.lines.get(bl.id); if (!al || bl.hidden || al.hidden || al.stationSet.size < 2 || bl.stationSet.size < 2) continue;
+      let inter = 0; for (const id of bl.stationSet) if (al.stationSet.has(id)) inter++;
+      if (inter >= 0.5 * Math.min(al.stationSet.size, bl.stationSet.size)) {
+        bl.hidden = true; bl.mergedInto = al.key; al.alsoIn.push(B.cfg.id);
+        if (!al.parts.length && bl.parts.length) al.parts = bl.parts;
+        if (!al.routes.length && bl.routes.length) { al.routes = bl.routes; buildLineGraph(al); }
+        projectStations(al, A.stations);
+      }
+    }
+  }
+}
+
+/* ---------- 畫路線與車站 ---------- */
+function routesToParts(line, stations) {
+  return line.routes.map(p => p.map(id => stations.get(id).latlng)).filter(p => p.length >= 2);
+}
+function drawSystem(S) {
+  for (const line of S.lines.values()) {
+    if (line.hidden) continue;
+    const parts = line.parts.length ? line.parts : routesToParts(line, S.stations);
+    line.polylines = parts.map(p => L.polyline(p, { pane: 'lines', color: line.color, weight: 5, opacity: .9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(S.layers.lines));
+  }
+  for (const st of S.stations.values()) {
+    const visLines = [...st.lines].map(lineByKey).filter(l => l && !l.hidden);
+    if (!visLines.length) continue;
+    const isX = visLines.length > 1;
+    st.marker = L.circleMarker(st.latlng, { pane: 'stations', bubblingMouseEvents: false, radius: isX ? 5 : 3.5, color: isX ? '#1c2430' : visLines[0].color, weight: isX ? 2.5 : 2, fillColor: '#fff', fillOpacity: 1 }).addTo(S.layers.stations);
+    st.marker.bindTooltip(st.name, { direction: 'top', offset: [0, -4], className: 'st-label' });
+    st.marker.on('click', () => selectStation(S.cfg.id, st.id));
+  }
+}
+function updateStationVisibility(S) {
+  for (const st of S.stations.values()) {
+    if (!st.marker) continue;
+    const anyVisible = [...st.lines].map(lineByKey).some(l => l && !l.hidden && l.visible !== false);
+    if (anyVisible) { if (!S.layers.stations.hasLayer(st.marker)) st.marker.addTo(S.layers.stations); }
+    else S.layers.stations.removeLayer(st.marker);
+  }
+}
+function applyLabels() {
+  const show = map.getZoom() >= 14, b = map.getBounds();
+  for (const S of Object.values(state.systems)) for (const st of S.stations.values()) {
+    const m = st.marker; if (!m) continue;
+    const want = show && b.contains(st.latlng);
+    if (want && !st.labeled) { m.unbindTooltip(); m.bindTooltip(st.name, { permanent: true, direction: 'right', offset: [7, 0], className: 'st-label', interactive: false }); st.labeled = true; }
+    else if (!want && st.labeled) { m.unbindTooltip(); m.bindTooltip(st.name, { direction: 'top', offset: [0, -4], className: 'st-label' }); st.labeled = false; }
+  }
+}
+map.on('zoomend moveend', applyLabels);
+
+function systemBounds(S) { const pts = [...S.stations.values()].filter(st => st.lines.size).map(st => st.latlng); return pts.length ? L.latLngBounds(pts) : null; }
+function zoomSystem(id) {
+  const S = state.systems[id]; if (!S) return; const b = systemBounds(S); if (!b) return;
+  map.flyToBounds(b, { padding: isMobile() ? [30, 30] : [60, 60], maxZoom: 13, duration: .8 });
+  if (isMobile()) $('systemsPanel').classList.remove('open');
+}
+function fitAll() {
+  const pts = []; for (const S of Object.values(state.systems)) if (S.status === 'ok') for (const st of S.stations.values()) if (st.lines.size) pts.push(st.latlng);
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: isMobile() ? [20, 20] : [60, 60] });
+}
+
+/* ---------- 即時資料 ---------- */
+async function refreshLive() {
+  if (state.refreshing) return; state.refreshing = true; setStatus();
+  const tasks = [];
+  for (const S of Object.values(state.systems)) {
+    if (S.status !== 'ok') continue;
+    if (S.mode === 'platform') tasks.push(fetchLive(S.cfg)
+      .then(recs => { S.live.feed = recs; S.live.feedTime = Date.now(); S.live.feedErr = null; S.live.srcTime = maxTime(recs); })
+      .catch(e => { S.live.feedErr = e.message; }));
+    else if (S.ttSource === 'sim' && S.simDay !== new Date().toDateString()) rebuildSim(S);   // 過了午夜重新合成今天的班表
+  }
+  await Promise.allSettled(tasks);
+  state.liveOk = Object.values(state.systems).some(S => S.status === 'ok' && ((S.mode === 'platform' && S.live.feedTime && !S.live.feedErr) || S.timetable));
+  computeAllTrains(); renderTrains(); renderSystems();
+  state.lastLiveAt = Date.now(); state.nextRefreshAt = Date.now() + REFRESH_MS; state.refreshing = false; setStatus();
+}
+function maxTime(recs) { let m = null; for (const r of recs) { const t = parseTime(r.UpdateTime || r.SrcUpdateTime || r.updateTime); if (t && (!m || t > m)) m = t; } return m; }
+
+// 時刻表／班距推估（本系統，或共用路線的另一個系統）
+function computeTrainsForLine(line) {
+  for (const sid of [line.sys, ...line.alsoIn]) {
+    const SS = state.systems[sid]; if (!SS || !SS.timetable) continue;
+    const recs = SS.timetable.filter(r => line.stationSet.has(r.StationID) && (!r.LineID || r.LineID === line.id));
+    if (recs.length) { const { lookup } = etaLookupFromTimetable(recs, new Date()); return inferTrainsForLine(line, SS.stations, lookup, SS.ttSource === 'sim' ? 'sim' : 'timetable', null); }
+  }
+  return [];
+}
+function computeAllTrains() {
+  const out = [], now = Date.now();
+  for (const S of Object.values(state.systems)) {
+    if (S.status !== 'ok') { S.trains = []; continue; }
+    let mine = [];
+    if (S.mode === 'platform') {
+      if (S.live.feedTime) mine = platformUpdate(S.tracker, S, S.nameIdx, S.live.feed, S.live.srcTime, now).filter(t => { const l = lineByKey(t.lineKey); return l && !l.hidden; });
+      const covered = new Set(mine.map(t => t.lineKey));
+      for (const line of S.lines.values()) if (!line.hidden && !covered.has(line.key) && line.alsoIn.length) mine.push(...computeTrainsForLine(line));
+    } else if (S.timetable) {
+      for (const line of S.lines.values()) if (!line.hidden) mine.push(...computeTrainsForLine(line));
+    }
+    S.trains = mine; out.push(...mine);
+  }
+  state.trains = out;
+}
+function countTrains(lineKey) { let n = 0; for (const t of state.trains) if (t.lineKey === lineKey) n++; return n; }
+
+/* ---------- 列車 marker ---------- */
+function trainPosition(t) {
+  const line = lineByKey(t.lineKey), S = state.systems[t.sys]; if (!line || !S) return null;
+  if (t.status === 'moving') return positionBetween(line, S.stations, t.from, t.to, t.f);
+  const st = S.stations.get(t.at); if (!st) return null;
+  const nb = t.facing && S.stations.get(t.facing), pb = t.backOf && S.stations.get(t.backOf);
+  return { latlng: st.latlng, bearing: nb ? bearing(st.latlng, nb.latlng) : pb ? bearing(pb.latlng, st.latlng) : 0 };
+}
+// 依「離站時間」推進位置：兩次更新之間用等速前進補間，並被 ETA 上下限夾住
+function updateKinematics(now) {
+  for (const t of state.trains) {
+    if (t.status !== 'moving') continue;
+    if (t.source === 'timetable' || t.source === 'sim') {    // 時刻表：ETA 隨時間線性遞減
+      const eta = Math.max(0, t.eta - (now - t.computedAt) / 60000);
+      t.f = Math.max(0.04, Math.min(0.97, 1 - (eta * 60) / t.rt)); continue;
+    }
+    if (!t.departedAt) continue;
+    const fdr = ((now - t.departedAt) / 1000) / t.rt;         // 等速推進
+    t.f = Math.max(t.fMin, Math.min(t.fMax, fdr));
+  }
+}
+function carryOverKinematics(now) {
+  const prev = new Map(); for (const o of state.prevTrains) if (o.uid) prev.set(o.uid, o);
+  for (const t of state.trains) {
+    t.computedAt = now;
+    if (t.status !== 'moving' || t.source !== 'live' || t.departedAt) continue;
+    const o = t.uid && prev.get(t.uid); if (!o) continue;
+    if (o.status === 'moving' && o.from === t.from && o.to === t.to && o.departedAt) t.departedAt = o.departedAt;
+    else if (o.status === 'at' && o.at === t.from) t.departedAt = now - REFRESH_MS / 2;   // 上次還停在前站，估計中途離站
+    else if (o.status === 'moving' && o.to === t.from) t.departedAt = now - REFRESH_MS / 2; // 上次還在前一段，這段剛開始
+    if (t.departedAt) {                                       // 起算點需與 ETA 區間一致，否則放棄推算
+      const fdr = ((now - t.departedAt) / 1000) / t.rt;
+      if (fdr < t.fMin - 0.35 || fdr > t.fMax + 0.35) t.departedAt = null;
+    }
+  }
+}
+function moveMarker(m, t, pos, line, flags) {
+  const el = m.getElement();
+  if (el) {
+    if (flags) for (const k in flags) el.classList.toggle(k, flags[k]);
+    const b = el.firstElementChild; if (b) { b.style.setProperty('--rot', pos.bearing.toFixed(0) + 'deg'); b.style.setProperty('--c', line.color); }
+    el.classList.add('glide'); clearTimeout(m._glideT); m._glideT = setTimeout(() => el.classList.remove('glide'), 1300);
+  }
+  m.setLatLng(pos.latlng);
+}
+function tickMotion() {
+  if (!state.trains.length) return;
+  updateKinematics(Date.now());
+  for (const t of state.trains) {
+    if (t.status !== 'moving' || !t.uid) continue;
+    const m = state.markers.get(t.uid), line = lineByKey(t.lineKey); if (!m || !line) continue;
+    const pos = trainPosition(t); if (!pos) continue;
+    t.latlng = pos.latlng; moveMarker(m, t, pos, line, null);
+  }
+}
+setInterval(tickMotion, 1000);
+function renderTrains() {
+  const now = Date.now();
+  matchTrains(state.prevTrains, state.trains);
+  for (const t of state.trains) if (!t.uid) t.uid = state.uidSeq++;
+  carryOverKinematics(now); updateKinematics(now);
+  const alive = new Set();
+  for (const t of state.trains) {
+    const line = lineByKey(t.lineKey), S = state.systems[t.sys]; if (!line || !S || line.visible === false) continue;
+    const pos = trainPosition(t); if (!pos) continue;
+    alive.add(t.uid); t.latlng = pos.latlng; t.bearingDeg = pos.bearing;
+    const sel = state.selected && state.selected.type === 'train' && state.selected.uid === t.uid;
+    const flags = { at: t.status === 'at', wait: t.status === 'wait', est: t.source === 'timetable' || t.source === 'sim', sel };
+    let m = state.markers.get(t.uid);
+    if (!m) {
+      const cls = 'train-icon ' + Object.keys(flags).filter(k => flags[k]).join(' ');
+      m = L.marker(pos.latlng, { pane: 'trains', keyboard: false, icon: L.divIcon({ className: cls, iconSize: [24, 24], iconAnchor: [12, 12], html: `<div class="body" style="--c:${line.color};--rot:${pos.bearing.toFixed(0)}deg" title="${esc(line.name)} 往${esc(t.destName || '')}"></div>` }) });
+      m.on('click', () => selectTrain(m.train.uid));
+      m.addTo(S.layers.trains); state.markers.set(t.uid, m);
+    } else moveMarker(m, t, pos, line, flags);
+    m.train = t;
+  }
+  for (const [uid, m] of state.markers) if (!alive.has(uid)) { m.remove(); state.markers.delete(uid); }
+  state.prevTrains = state.trains;
+  if (state.selected && state.selected.type === 'train') showTrainDetail(state.selected.uid);
+}
+
+/* ---------- 側欄：系統清單 ---------- */
+function liveMeta(S) {
+  const L2 = S.live;
+  if (S.mode === 'none') return '沒有此系統的時刻表或即時資料，僅顯示路線與車站';
+  if (S.mode === 'timetable') return '沒有免費即時資料，依站別時刻表推估';
+  if (S.mode === 'sim') return `沒有時刻表，依首末班車＋班距模擬${S.simNote}`;
+  if (L2.feedErr) return `即時資料讀取失敗：${L2.feedErr}`;
+  if (!L2.feedTime) return '等待即時資料…';
+  const age = L2.srcTime ? Math.round((Date.now() - L2.srcTime) / 1000) : null;
+  const stale = age != null && age > 150 ? `（來源已 ${Math.round(age / 60)} 分未更新）` : '';
+  const un = S.tracker.unresolved ? ` · ${S.tracker.unresolved} 筆站名對不上` : '';
+  return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}`;
+}
+function renderSystems() {
+  const html = [];
+  for (const cfg of ACTIVE_SYSTEMS) {
+    const S = state.systems[cfg.id]; if (!S) continue;
+    let meta = S.status === 'loading' ? '載入路網中…' : S.status === 'error' ? `路網載入失敗：${esc(S.err || '')}` : esc(liveMeta(S));
+    const chips = [...S.lines.values()].filter(l => !l.hidden).map(l =>
+      `<button type="button" class="chip ${l.visible === false ? 'off' : ''}" data-line="${esc(l.key)}" style="--c:${esc(l.color)}" aria-pressed="${l.visible !== false}"><i></i>${esc(l.name)}<span class="cnt num">${countTrains(l.key) || ''}</span></button>`).join('');
+    html.push(`<div class="sys-row">
+      <div class="sys-top"><input type="checkbox" ${S.visible ? 'checked' : ''} data-toggle="${cfg.id}" aria-label="顯示${esc(cfg.name)}">
+        <button class="sys-name" type="button" data-zoom="${cfg.id}">${esc(cfg.name)}<small class="num">${S.status === 'ok' ? S.trains.length + ' 列' : ''}</small></button></div>
+      <div class="sys-meta ${S.status === 'error' || S.live.feedErr ? 'err' : ''}">${meta}</div>
+      <div class="lines">${chips}</div></div>`);
+  }
+  $('systemsList').innerHTML = html.join('');
+}
+$('systemsList').addEventListener('click', e => {
+  const tg = e.target.closest('[data-toggle]'); if (tg) { const S = state.systems[tg.dataset.toggle]; S.visible = tg.checked; for (const g of Object.values(S.layers)) S.visible ? g.addTo(map) : map.removeLayer(g); return; }
+  const zb = e.target.closest('[data-zoom]'); if (zb) { zoomSystem(zb.dataset.zoom); return; }
+  const ch = e.target.closest('[data-line]'); if (ch) {
+    const line = lineByKey(ch.dataset.line); if (!line) return;
+    line.visible = line.visible === false; const S = state.systems[line.sys];
+    for (const pl of (line.polylines || [])) line.visible ? pl.addTo(S.layers.lines) : S.layers.lines.removeLayer(pl);
+    updateStationVisibility(S); renderTrains(); renderSystems();
+  }
+});
+
+/* ---------- 詳細資料面板 ---------- */
+function openDetail(head, body) { $('detailHead').textContent = head; $('detailBody').innerHTML = body; $('detailPanel').hidden = false; }
+function closeDetail() {
+  $('detailPanel').hidden = true;
+  if (state.selected && state.selected.type === 'train') { const m = state.markers.get(state.selected.uid); const el = m && m.getElement(); if (el) el.classList.remove('sel'); }
+  state.selected = null;
+}
+function selectTrain(uid) {
+  if (state.selected && state.selected.type === 'train') { const m = state.markers.get(state.selected.uid); const el = m && m.getElement(); if (el) el.classList.remove('sel'); }
+  state.selected = { type: 'train', uid };
+  const m = state.markers.get(uid); const el = m && m.getElement(); if (el) el.classList.add('sel');
+  showTrainDetail(uid);
+}
+function showTrainDetail(uid) {
+  const t = state.trains.find(x => x.uid === uid);
+  if (!t) { openDetail('列車', '<p class="empty">這列車已抵達終點，或在最新一次更新後無法再對應到同一列車。</p>'); return; }
+  const line = lineByKey(t.lineKey), S = state.systems[t.sys];
+  const nm = id => (S.stations.get(id) || {}).name || id || '—';
+  const c = esc(line.color);
+  let stateHtml = '';
+  if (t.status === 'at') stateHtml = `<b>停靠／進站中</b><div class="eta">${esc(nm(t.at))}</div>${t.facing ? `<div class="d-sub">下一站 ${esc(nm(t.facing))}</div>` : ''}`;
+  else if (t.status === 'wait') stateHtml = `<b>起點站待發車</b><div class="eta">${esc(nm(t.at))}<small>約 ${fmtEta(t.eta)} 後發車</small></div>`;
+  else stateHtml = `<b>行駛中</b><div class="eta">${esc(nm(t.from))} → ${esc(nm(t.to))}</div><div class="d-sub">抵達 ${esc(nm(t.to))}：${fmtEta(t.eta)}</div>`;
+  const stops = (t.upcoming || []).map(u => `<li><span class="n"><i style="--c:${c}"></i><span>${esc(nm(u.station))}</span></span><span class="t num ${u.eta <= 0.05 ? 'now' : ''}">${fmtEta(u.eta)}</span></li>`).join('');
+  const srcLabel = t.source === 'platform' ? '臺北捷運公開資料「列車進站站名」（每 30 秒）＋站間行駛時間推算' : t.source === 'sim' ? '首末班車＋班距模擬（此系統沒有時刻表）' : '站別時刻表推估（此系統沒有免費即時資料）';
+  const body = `
+    <span class="line-tag" style="--c:${c}">${esc(S.cfg.name)} · ${esc(line.name)}</span>
+    <div class="d-title">往 ${esc(t.destName || nm(t.dest) || (t.direction != null ? '方向 ' + t.direction : ''))}</div>
+    ${t.headSign && t.headSign !== t.destName ? `<div class="d-sub">${esc(t.headSign)}</div>` : ''}
+    <div class="d-state" style="--c:${c}">${stateHtml}</div>
+    ${stops ? `<div class="d-section"><h3>接下來停靠</h3><ul class="stops">${stops}</ul></div>` : ''}
+    <div class="d-section"><dl class="kv">
+      <dt>資料來源</dt><dd>${srcLabel}</dd>
+      <dt>來源更新</dt><dd class="num">${fmtTime(t.srcTime || state.lastLiveAt)}</dd>
+      <dt>路線代碼</dt><dd>${esc(line.id)}${t.dest ? ' · 終點 ' + esc(t.dest) : ''}</dd>
+    </dl></div>
+    ${t.ambiguous ? '<p class="d-sub" style="margin-top:12px">這個月台同時屬於兩條路線，資料無法分辨是哪一條，暫依第一條顯示。</p>' : ''}
+    ${t.hops ? `<p class="d-sub" style="margin-top:12px">這列車已連續 ${t.hops} 站沒被進站資料看到，位置為純推算。</p>` : ''}
+    <p class="d-sub" style="margin-top:12px">${t.source === 'platform' ? '離開月台後的位置由站間行駛時間推算，實際可能略有前後。' : '依班表推估，未考慮誤點與臨時調度。'}</p>`;
+  openDetail(line.name, body);
+}
+function selectStation(sysId, id) {
+  closeDetail(); state.selected = { type: 'station', sys: sysId, id };
+  const S = state.systems[sysId], st = S.stations.get(id); if (!st) return;
+  const lines = [...st.lines].map(lineByKey).filter(l => l && !l.hidden);
+  const tags = lines.map(l => `<span class="line-tag" style="--c:${esc(l.color)}">${esc(l.name)}</span>`).join(' ');
+  const rows = [], nm = x => (S.stations.get(x) || {}).name || x;
+  const colorOf = t => esc((lineByKey(t.lineKey) || {}).color || '#888');
+  // 進站資料：正在月台的列車，以及推算中即將抵達的列車
+  const here = state.trains.filter(t => t.sys === sysId && ((t.status === 'at' && t.at === id) || (t.status === 'moving' && t.to === id))).sort((a, b) => a.eta - b.eta);
+  for (const t of here) rows.push(`<li><span class="n"><i style="--c:${colorOf(t)}"></i><span>往 ${esc(t.destName || nm(t.dest))}</span></span><span class="t num ${t.status === 'at' ? 'now' : ''}">${t.status === 'at' ? '進站中' : '約 ' + fmtEta(t.eta)}</span></li>`);
+  // 時刻表：下幾班
+  if (!rows.length) {
+    const srcSys = new Set([sysId]); lines.forEach(l => l.alsoIn.forEach(x => srcSys.add(x)));
+    for (const sid of srcSys) {
+      const SS = state.systems[sid]; if (!SS || !SS.timetable) continue;
+      const { lookup } = etaLookupFromTimetable(SS.timetable.filter(r => r.StationID === id), new Date());
+      const m = lookup.get(id); if (!m) continue;
+      for (const [dest, info] of m) rows.push(`<li><span class="n"><i style="--c:${esc((lineByKey(sid + ':' + (info.rec.LineID || '')) || lines[0] || {}).color || '#888')}"></i><span>往 ${esc(info.destName)}（${SS.ttSource === 'sim' ? '班距模擬' : '時刻表'}）</span></span><span class="t num">${info.nextTimes.map(x => fmtEta(x)).join('、')}</span></li>`);
+    }
+  }
+  const body = `${tags}<div class="d-title">${esc(st.name)}</div><div class="d-sub">${esc(S.cfg.name)} · ${esc(id)}${st.raw && st.raw.StationAddress ? '<br>' + esc(st.raw.StationAddress) : ''}</div>
+    <div class="d-section"><h3>${S.mode === 'platform' ? '月台與即將抵達' : '下一班列車'}</h3>${rows.length ? `<ul class="stops">${rows.join('')}</ul>` : `<p class="empty">${S.mode === 'platform' ? '目前沒有列車在這一站的月台，也沒有推算中即將抵達的列車。' : '目前沒有這一站的班次資料。'}</p>`}</div>
+    <div class="d-section"><button type="button" class="linkish" id="btnCenter">在地圖上置中</button></div>`;
+  openDetail('車站', body);
+  $('btnCenter').onclick = () => map.flyTo(st.latlng, Math.max(map.getZoom(), 15), { duration: .6 });
+}
+
+/* ---------- 狀態列與更新循環 ---------- */
+function setStatus() {
+  const dot = $('liveDot'), el = $('statusText');
+  const anyErr = Object.values(state.systems).some(S => S.status === 'ok' && S.live.feedErr);
+  dot.classList.toggle('on', state.liveOk && !anyErr); dot.classList.toggle('err', !!anyErr);
+  if (state.refreshing) { el.innerHTML = '更新中…'; return; }
+  if (!state.lastLiveAt) { el.innerHTML = '載入路網資料…'; return; }
+  const left = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
+  el.innerHTML = `${MOCK ? '<b>示範資料</b> · ' : ''}<b class="num">${state.trains.length}</b> 列 · 更新於 <span class="num">${fmtTime(state.lastLiveAt)}</span> · <span class="num">${left}</span> 秒後更新`;
+}
+setInterval(() => {
+  setStatus();
+  if (state.lastLiveAt && !document.hidden && Date.now() >= state.nextRefreshAt) refreshLive();
+}, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.lastLiveAt && Date.now() >= state.nextRefreshAt) refreshLive(); });
+
+$('btnRefresh').addEventListener('click', () => { if (state.lastLiveAt) refreshLive(); });
+$('btnSystems').addEventListener('click', () => $('systemsPanel').classList.toggle('open'));
+$('closeSystems').addEventListener('click', () => $('systemsPanel').classList.remove('open'));
+$('closeDetail').addEventListener('click', closeDetail);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+map.on('click', () => { if (state.selected) closeDetail(); });
+
+/* ---------- 啟動 ---------- */
+(async function init() {
+  if (MOCK) $('footNote').textContent = '目前為示範資料模式（?mock=1）：路網與列車皆為模擬，不代表真實營運。';
+  else fetch(`${DATA_BASE}/index.json`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.generatedAt) { state.dataInfo = d; $('footNote').textContent += ` 路網資料產生於 ${new Date(d.generatedAt).toLocaleDateString('zh-TW')}。`; } }).catch(() => {});
+  await Promise.all(ACTIVE_SYSTEMS.map(loadSystem));
+  dedupeSharedLines();
+  for (const S of Object.values(state.systems)) if (S.status === 'ok') drawSystem(S);
+  const okCount = Object.values(state.systems).filter(S => S.status === 'ok').length;
+  if (!okCount) { toast('路網資料載入失敗：請先在 GitHub 執行 Actions「更新資料並部署」產生 data/ 資料夾（見 README）', 12000); $('statusText').textContent = '路網載入失敗'; return; }
+  const want = Q.get('sys');
+  if (want && state.systems[want] && state.systems[want].status === 'ok') zoomSystem(want); else fitAll();
+  applyLabels();
+  await refreshLive();
+})();
+</script>
+</body>
+</html>
