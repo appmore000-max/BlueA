@@ -86,6 +86,11 @@
   .sw.est{border-style:dashed}
 
   .sys-row{padding:8px 0;border-bottom:1px solid var(--rule)}
+  .grp{font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;padding:12px 0 2px}
+  .sw.bus{border-radius:50%;background:#e67e22}
+  .bus-tip{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:3px 7px;font:600 12px/1.3 var(--font);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  .bus-tip::before{display:none}
+  body.dark .bus-tip{background:#181d24}
   .sys-row:last-child{border-bottom:0}
   .sys-top{display:flex;align-items:center;gap:8px}
   .sys-top input{width:16px;height:16px;margin:0;accent-color:var(--ink);cursor:pointer}
@@ -191,6 +196,7 @@
     <li><i class="sw at"></i>停靠／進站中</li>
     <li><i class="sw"></i>行駛中（實際進站資料推算）</li>
     <li><i class="sw est"></i>時刻表／班距推估</li>
+    <li><i class="sw bus"></i>公車（GPS）</li>
   </ul>
   <div class="panel-body" id="systemsList"></div>
   <p class="note" id="footNote">臺北捷運：以官方公開的「列車進站站名」資料（每 30 秒）加站間行駛時間推算；其他系統沒有免費即時資料，依時刻表或班距推估。路網資料來自交通部 TDX。</p>
@@ -597,6 +603,73 @@ const CORE = (() => {
     return cur;
   }
 
+  /* ---------- 台鐵／高鐵：用定期時刻表逐車模擬位置 ---------- */
+  // data.trains: [{ no, type, dir, days, eff, exp, stops: [[stationId, 到站分, 離站分], ...] }]
+  const svcKeyOf = d => dateKey(d);
+  function serviceCandidates(now) {                    // 凌晨 4 點前同時看「前一天」（+1440）與「今天」兩份營運日
+    const raw = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const out = [];
+    if (now.getHours() < 4) { const prev = new Date(today); prev.setDate(prev.getDate() - 1); out.push({ day: prev, mins: raw + 1440 }); }
+    out.push({ day: today, mins: raw });
+    return out.map(c => ({ ...c, key: svcKeyOf(c.day), dow: (c.day.getDay() === 0 || c.day.getDay() === 6) && WORKDAYS.has(svcKeyOf(c.day)) ? 1 : c.day.getDay(), holiday: HOLIDAYS.has(svcKeyOf(c.day)) }));
+  }
+  function trainRuns(tr, c) {
+    if (tr.eff && c.key < tr.eff) return false; if (tr.exp && c.key > tr.exp) return false;
+    return serviceDayMatches(tr.days, c.dow, c.holiday);
+  }
+  function railLineFor(S, a, b) {                      // 找同時包含兩站的路線（沿它的線型內插）
+    const sa = S.stations.get(a), sb = b ? S.stations.get(b) : null; if (!sa || (b && !sb)) return null;
+    for (const key of sa.lines) if (!b || sb.lines.has(key)) { const line = S.lines.get(key.split(':').slice(1).join(':')); if (line && !line.hidden) return line; }
+    for (const key of sa.lines) { const line = S.lines.get(key.split(':').slice(1).join(':')); if (line && !line.hidden) return line; }
+    return null;
+  }
+  function scheduledTrains(S, data, now, opts = {}) {
+    const leadMin = opts.leadMin ?? 3, out = [];
+    if (!data || !data.trains) return out;
+    for (const c of serviceCandidates(now)) {
+      const base = c.day.getTime();
+      for (const tr of data.trains) {
+        const st = tr.stops; if (!st || st.length < 2) continue;
+        const first = st[0], last = st[st.length - 1];
+        if (c.mins < first[2] - leadMin || c.mins > last[1] + 1) continue;
+        if (!trainRuns(tr, c)) continue;
+        let status = null, from = null, to = null, at = null, depT = 0, arrT = 0, idx = 0;
+        if (c.mins < first[2]) { status = 'wait'; at = first[0]; idx = 0; }
+        else {
+          for (let i = 0; i < st.length - 1; i++) {
+            const a = st[i], b = st[i + 1];
+            if (c.mins >= a[1] && c.mins < a[2]) { status = 'at'; at = a[0]; idx = i; break; }
+            if (c.mins >= a[2] && c.mins < b[1]) { status = 'moving'; from = a[0]; to = b[0]; depT = a[2]; arrT = b[1]; idx = i + 1; break; }
+          }
+          if (!status) { status = 'at'; at = last[0]; idx = st.length - 1; }
+        }
+        const line = status === 'moving' ? railLineFor(S, from, to) : railLineFor(S, at, null); if (!line) continue;
+        const dest = last[0], destName = (S.stations.get(dest) || {}).name || dest;
+        const f = status === 'moving' ? Math.max(0.02, Math.min(0.98, (c.mins - depT) / Math.max(0.5, arrT - depT))) : 1;
+        const upcoming = st.slice(idx).map(x => ({ station: x[0], eta: Math.max(0, x[1] - c.mins) }));
+        const nextStop = status === 'moving' ? to : (st[idx + 1] ? st[idx + 1][0] : null);
+        out.push({ id: `${S.cfg.id}:${tr.no}:${c.key}`, lineKey: line.key, sys: S.cfg.id, lineId: line.id, dest, destName, headSign: '', trainNo: tr.no, trainType: tr.type || '', dir: tr.dir,
+          status, at, from, to, f, fMin: 0.02, fMax: 0.98, rt: status === 'moving' ? (arrT - depT) * 60 : 0, eta: status === 'moving' ? Math.max(0, arrT - c.mins) : 0,
+          source: 'train', srcTime: null, depMs: base + depT * 60000, arrMs: base + arrT * 60000, upcoming, pos: -(st.length - idx + (status === 'moving' ? 1 - f : 0)),
+          nextStop, facing: nextStop, backOf: from, origin: first[0], originName: (S.stations.get(first[0]) || {}).name || first[0] });
+      }
+    }
+    return out;
+  }
+  // 車站的接下來班次（未來 windowMin 分鐘內在本站發車的列車）
+  function stationDepartures(S, data, stationId, now, windowMin = 120) {
+    const out = [];
+    if (!data || !data.trains) return out;
+    for (const c of serviceCandidates(now)) for (const tr of data.trains) {
+      const st = tr.stops; const k = st.findIndex(x => x[0] === stationId); if (k < 0 || k === st.length - 1) continue;
+      const dep = st[k][2]; if (dep < c.mins - 0.5 || dep > c.mins + windowMin) continue;
+      if (!trainRuns(tr, c)) continue;
+      out.push({ no: tr.no, type: tr.type || '', dest: st[st.length - 1][0], destName: (S.stations.get(st[st.length - 1][0]) || {}).name || st[st.length - 1][0], depMin: dep, eta: dep - c.mins, time: hhmm(dep) });
+    }
+    return out.sort((a, b) => a.eta - b.eta);
+  }
+
   /* ---------- 示範資料（?mock=1）：模擬三個系統 ---------- */
   function makeMock(speed = 1) {
     const t0 = Date.now();
@@ -639,38 +712,59 @@ const CORE = (() => {
       return recs;
     }
     const allDays = { Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true };
+    // R：模擬台鐵——4 站、每小時發車的定期時刻表（Trains.json 格式）
+    const R = mkStations('R', ['豐原', '台中', '彰化', '員林'], [[24.2530, 120.7237], [24.1369, 120.6866], [24.0817, 120.5386], [23.9603, 120.5698]]);
+    const rTrains = [];
+    for (let h = 5; h < 24; h++) for (const dir of [0, 1]) {
+      const order = dir ? R.slice().reverse() : R; const times = [0, 18, 40, 55];
+      rTrains.push({ no: String(dir ? 200 + h : 100 + h), type: h % 2 ? '區間' : '自強', dir, days: allDays, eff: null, exp: null,
+        stops: order.map((st, i) => [st.StationID, h * 60 + times[i], h * 60 + times[i] + (i === 0 || i === order.length - 1 ? 0 : 2)]) });
+    }
+    // 公車：一條路線、幾輛車繞著台中車站附近跑
+    const busStops = [[24.1370, 120.6860], [24.1420, 120.6800], [24.1480, 120.6750], [24.1550, 120.6700]];
+    const busRoutes = [{ id: '10', sub: '100', name: '示範 300', subName: '', from: '台中車站', to: '文心森林', genus: '' }];
+    const busRouteFile = { stops: { 0: busStops.map((p, i) => ({ id: 'S' + i, name: '示範站 ' + (i + 1), seq: i + 1, lat: p[0], lon: p[1] })), 1: busStops.slice().reverse().map((p, i) => ({ id: 'T' + i, name: '示範站 ' + (4 - i), seq: i + 1, lat: p[0], lon: p[1] })) }, shape: { 0: 'LINESTRING(' + busStops.map(p => p[1] + ' ' + p[0]).join(',') + ')' } };
+    function busFeed() {
+      const t = simNow(), out = [];
+      for (let k = 0; k < 5; k++) { const u = ((t / 240) + k / 5) % 1, seg = Math.min(2, Math.floor(u * 3)), g = u * 3 - seg, a = busStops[seg], b = busStops[seg + 1];
+        out.push({ BusID: 'MOCK-' + k, RouteID: '100', GoBack: '0', Longitude: String(a[1] + (b[1] - a[1]) * g), Latitude: String(a[0] + (b[0] - a[0]) * g), Speed: '25', Azimuth: '300', BusStatus: '0', DutyStatus: '0', DataTime: new Date().toISOString() }); }
+      return out;
+    }
     const firstLastC = [0, 1].map(dir => { const o = dir ? C.slice().reverse() : C; return { LineID: 'F', StationID: o[0].StationID, DestinationStationID: o[o.length - 1].StationID, DestinationStationName: o[o.length - 1].StationName, FirstTrainTime: '06:00', LastTrainTime: '00:00', ServiceDay: allDays }; });
     const frequencyC = [0, 1].map(dir => { const o = dir ? C.slice().reverse() : C; return { LineID: 'F', DestinationStationID: o[o.length - 1].StationID, ServiceDay: allDays, Headways: [{ StartTime: '06:00', EndTime: '09:00', MinHeadwayMins: 4, MaxHeadwayMins: 6 }, { StartTime: '09:00', EndTime: '17:00', MinHeadwayMins: 8, MaxHeadwayMins: 10 }, { StartTime: '17:00', EndTime: '24:00', MinHeadwayMins: 5, MaxHeadwayMins: 7 }] }; });
     const data = {
       MOCKA: { Line: [{ LineID: 'G', LineName: { Zh_tw: '示範綠線' }, LineColor: '#5cb531' }], Station: A, StationOfRoute: routes('G', A), StationOfLine: [], Shape: [{ LineID: 'G', Geometry: wkt(A) }], S2STravelTime: s2s('G', A, hop),
         StationExit: [1, 2, 3].map(n => ({ StationID: 'G05', ExitID: 'G05-' + n, ExitName: { Zh_tw: '出口' + n }, ExitPosition: { PositionLat: 24.1653 + n * 0.0004, PositionLon: 120.6858 + n * 0.0003 }, Elevator: n === 1, Escalator: n !== 3, Stair: true })) },
       MOCKB: { Line: [{ LineID: 'T', LineName: { Zh_tw: '示範橘線' }, LineColor: '#f8b62b' }], Station: B, StationOfRoute: routes('T', B), StationOfLine: [], Shape: [{ LineID: 'T', Geometry: wkt(B) }], S2STravelTime: [], StationTimeTable: timetableB() },
-      MOCKC: { Line: [{ LineID: 'F', LineName: { Zh_tw: '示範紅線' }, LineColor: '#d0021b' }], Station: C, StationOfRoute: routes('F', C), StationOfLine: [], Shape: [{ LineID: 'F', Geometry: wkt(C) }], S2STravelTime: s2s('F', C, 150), StationTimeTable: [], FirstLastTimetable: firstLastC, Frequency: frequencyC }
+      MOCKC: { Line: [{ LineID: 'F', LineName: { Zh_tw: '示範紅線' }, LineColor: '#d0021b' }], Station: C, StationOfRoute: routes('F', C), StationOfLine: [], Shape: [{ LineID: 'F', Geometry: wkt(C) }], S2STravelTime: s2s('F', C, 150), StationTimeTable: [], FirstLastTimetable: firstLastC, Frequency: frequencyC },
+      MOCKR: { Line: [{ LineID: 'WL', LineName: { Zh_tw: '示範幹線' }, LineColor: '#3b6fb6' }], Station: R, StationOfLine: [{ LineID: 'WL', Stations: R.map((st, i) => ({ Sequence: i + 1, StationID: st.StationID })) }], Shape: [{ LineID: 'WL', Geometry: wkt(R) }], Trains: { trains: rTrains } },
+      'bus/MOCKBUS': { routes: busRoutes, 'route/10': busRouteFile }
     };
     return {
       async static(sys, kind) { await new Promise(r => setTimeout(r, 60)); const d = data[sys]; return d && kind in d ? d[kind] : null; },
-      async live(sys) { await new Promise(r => setTimeout(r, 60)); if (sys !== 'MOCKA') throw new Error('mock 無此系統即時資料'); return platformFeedA(); },
+      async live(sys) { await new Promise(r => setTimeout(r, 60)); if (sys === 'MOCKBUS') return busFeed(); if (sys !== 'MOCKA') throw new Error('mock 無此系統即時資料'); return platformFeedA(); },
       index() { return { generatedAt: new Date().toISOString(), mock: true }; }
     };
   }
 
   return { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectOnPart, pointAtChain, projectStations, positionBetween,
     buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-    normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay };
+    normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay,
+    scheduledTrains, stationDepartures, railLineFor };
 })();
 /* ===================== CORE END ===================== */
 
 /* ===================== APP（地圖、資料載入、UI） ===================== */
 const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectStations, positionBetween,
   buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar } = CORE;
+  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
 // 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
 // 開頁時會自動讀進來覆蓋這裡的值；這樣之後更新 index.html 也不會把設定洗掉
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
-  liveProxy: 'https://late-hill-b6d1.qqaawwss6574.workers.dev/',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+  liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
   // 這份清單只在抓不到時使用，也可以在這裡加自己想要的日期
@@ -707,16 +801,29 @@ const SYSTEMS = [
   { id: 'TMRT',   name: '臺中捷運', color: '#5cb531', statusSrc: 'tmrt_status' },   // 官網的營運狀態與目前班距（僅經代理）
   { id: 'KRTC',   name: '高雄捷運', color: '#d0021b' },
   { id: 'KLRT',   name: '高雄輕軌', color: '#7fb800', speed: 7 },
+  // 台鐵／高鐵：kind:'train' = 用 TDX 定期時刻表逐車模擬（沒有免費的即時誤點資料）
+  { id: 'THSR',   name: '台灣高鐵', color: '#c8511b', kind: 'train', group: 'rail', speed: 60 },
+  { id: 'TRA',    name: '臺鐵',     color: '#3b6fb6', kind: 'train', group: 'rail', speed: 25 },
+];
+// 公車：臺北市／新北市公車動態資訊系統的公開 GPS（免金鑰，經 Worker 轉送）；預設關閉，勾了才抓
+const BUS_CITIES = [
+  { id: 'TPE',  name: '臺北市公車', src: 'bus_tpe',  color: '#e67e22', center: [25.045, 121.54], feed: 'https://tcgbusfs.blob.core.windows.net/blobbus/GetBusData.gz' },
+  { id: 'NTPC', name: '新北市公車', src: 'bus_ntpc', color: '#c0392b', center: [25.01, 121.46], feed: 'https://tcgbusfs.blob.core.windows.net/ntpcbus/GetBusData.gz' },
 ];
 const MOCK_SYSTEMS = [
   { id: 'MOCKA', name: '示範系統 A（進站資料推算）', color: '#5cb531', live: 'platform', src: 'mocka' },
   { id: 'MOCKB', name: '示範系統 B（時刻表推估）', color: '#f8b62b' },
   { id: 'MOCKC', name: '示範系統 C（班距模擬）', color: '#d0021b' },
+  { id: 'MOCKR', name: '示範鐵路（時刻表逐車模擬）', color: '#3b6fb6', kind: 'train', group: 'rail', speed: 25 },
 ];
+const MOCK_BUS = [{ id: 'MOCKBUS', name: '示範公車', src: 'mockbus', color: '#e67e22', center: [24.145, 120.68] }];
 const ACTIVE_SYSTEMS = MOCK ? MOCK_SYSTEMS : SYSTEMS;
+const ACTIVE_BUS = MOCK ? MOCK_BUS : BUS_CITIES;
+const RAIL_PALETTE = ['#3b6fb6', '#2e8b57', '#c8511b', '#8e44ad', '#16a085', '#d35400', '#7f8c8d', '#2c3e50', '#27ae60', '#c0392b', '#2980b9', '#f39c12', '#1abc9c', '#9b59b6', '#34495e', '#e84393'];
 const mock = MOCK ? makeMock(Number(Q.get('speed')) || 1) : null;
 
-const state = { systems: {}, trains: [], prevTrains: [], markers: new Map(), uidSeq: 1, selected: null, follow: false, nextRefreshAt: 0, lastLiveAt: null, refreshing: false, liveOk: false, dataInfo: null };
+const state = { systems: {}, trains: [], prevTrains: [], markers: new Map(), uidSeq: 1, selected: null, follow: false, nextRefreshAt: 0, lastLiveAt: null, refreshing: false, liveOk: false, dataInfo: null,
+  bus: { on: new Set(), cities: {}, lastAt: 0, markers: new Map(), selected: null } };
 
 // 靜態資料：data/<系統>/<種類>.json（404 → null）
 async function loadStatic(sys, kind) {
@@ -782,6 +889,7 @@ async function loadSystem(cfg) {
   renderSystems();
   try {
     const get = k => loadStatic(cfg.id, k).catch(() => null);
+    if (cfg.kind === 'train') { await loadRailSystem(S, get); S.status = 'ok'; renderSystems(); return; }
     const [lines, stations, routes, sol, shapes, s2s] = await Promise.all(['Line', 'Station', 'StationOfRoute', 'StationOfLine', 'Shape', 'S2STravelTime'].map(get));
     if (!lines || !stations) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json：repo 裡還沒有 data/ 資料夾。到 GitHub 的 Actions 頁籤，選「更新資料並部署」按 Run workflow 跑一次（需先在 Settings → Secrets 填 TDX_CLIENT_ID / TDX_CLIENT_SECRET）`);
     buildSystem(S, lines, stations, routes, sol || [], shapes || [], s2s || []);
@@ -791,6 +899,24 @@ async function loadSystem(cfg) {
     S.status = 'ok';
   } catch (e) { S.status = 'error'; S.err = e.message; }
   renderSystems();
+}
+// 台鐵／高鐵：路網 + 定期時刻表（Trains.json）。高鐵沒有 Line／StationOfLine 就用車站代碼順序合成一條線
+async function loadRailSystem(S, get) {
+  const cfg = S.cfg;
+  const [stations, linesRaw, solRaw, shapes, trains] = await Promise.all(['Station', 'Line', 'StationOfLine', 'Shape', 'Trains'].map(get));
+  if (!stations) throw new Error(`找不到 data/${cfg.id}/Station.json：請重新執行 Actions「更新資料並部署」（新版會抓台鐵、高鐵）`);
+  let lines = linesRaw ? pickArray(linesRaw) : [], sol = solRaw ? pickArray(solRaw) : [];
+  if (!lines.length) {
+    const ids = pickArray(stations).map(x => x.StationID).filter(Boolean).sort();
+    lines = [{ LineID: cfg.id, LineName: { Zh_tw: cfg.name }, LineColor: cfg.color }];
+    sol = [{ LineID: cfg.id, Stations: ids.map((id, i) => ({ Sequence: i + 1, StationID: id })) }];
+  }
+  lines = lines.map((ln, i) => ({ ...ln, LineColor: ln.LineColor || RAIL_PALETTE[i % RAIL_PALETTE.length] }));
+  buildSystem(S, lines, stations, [], sol, shapes || [], []);
+  for (const line of S.lines.values()) if (!line.stationSet.size) line.hidden = true;   // 沒有車站序的線不畫
+  if (![...S.lines.values()].some(l => !l.hidden)) throw new Error('沒有路線資料');
+  S.trainData = trains && trains.trains ? trains : null;
+  S.mode = S.trainData ? 'train' : 'none';
 }
 // 沒有即時資料的系統：站別時刻表 → 沒有的話用「首末班車＋班距」合成 → 都沒有就只畫路線
 async function loadTimetable(S, get) {
@@ -953,9 +1079,10 @@ async function refreshLive() {
     else if (S.ttSource === 'sim' && S.simDay !== new Date().toDateString()) rebuildSim(S);   // 過了午夜重新合成今天的班表
     if (S.cfg.statusSrc && LIVE_PROXY && (!S.statusAt || Date.now() - S.statusAt > 5 * 60 * 1000)) tasks.push(fetchStatus(S));
   }
+  if (state.bus.on.size && Date.now() - state.bus.lastAt >= 19000) { state.bus.lastAt = Date.now(); for (const id of state.bus.on) tasks.push(fetchBusCity(id)); }
   await Promise.allSettled(tasks);
-  state.liveOk = Object.values(state.systems).some(S => S.status === 'ok' && ((S.mode === 'platform' && S.live.feedTime && !S.live.feedErr) || S.timetable));
-  computeAllTrains(); renderTrains(); renderSystems();
+  state.liveOk = Object.values(state.systems).some(S => S.status === 'ok' && ((S.mode === 'platform' && S.live.feedTime && !S.live.feedErr) || S.timetable || S.mode === 'train'));
+  computeAllTrains(); renderTrains(); renderBuses(); renderSystems();
   state.lastLiveAt = Date.now(); state.nextRefreshAt = Date.now() + REFRESH_MS; state.refreshing = false; setStatus();
 }
 // 營運公司官網的營運狀態／目前班距（目前只有臺中捷運）；班距若與模擬用的不同，就用官網的重新合成班表
@@ -988,6 +1115,8 @@ function computeAllTrains() {
       if (S.live.feedTime) mine = platformUpdate(S.tracker, S, S.nameIdx, S.live.feed, S.live.srcTime, now).filter(t => { const l = lineByKey(t.lineKey); return l && !l.hidden; });
       const covered = new Set(mine.map(t => t.lineKey));
       for (const line of S.lines.values()) if (!line.hidden && !covered.has(line.key) && line.alsoIn.length) mine.push(...computeTrainsForLine(line));
+    } else if (S.mode === 'train') {
+      mine = scheduledTrains(S, S.trainData, new Date()).filter(t => { const l = lineByKey(t.lineKey); return l && !l.hidden && l.visible !== false; });
     } else if (S.timetable) {
       for (const line of S.lines.values()) if (!line.hidden) mine.push(...computeTrainsForLine(line));
     }
@@ -1009,6 +1138,10 @@ function trainPosition(t) {
 function updateKinematics(now) {
   for (const t of state.trains) {
     if (t.status !== 'moving') continue;
+    if (t.source === 'train') {                              // 台鐵／高鐵：直接用時刻表的離站／到站時間算
+      if (t.arrMs > t.depMs) t.f = Math.max(0.02, Math.min(0.98, (now - t.depMs) / (t.arrMs - t.depMs)));
+      t.eta = Math.max(0, (t.arrMs - now) / 60000); continue;
+    }
     if (t.source === 'timetable' || t.source === 'sim') {    // 時刻表：ETA 隨時間線性遞減
       const eta = Math.max(0, t.eta - (now - t.computedAt) / 60000);
       t.f = Math.max(0.04, Math.min(0.97, 1 - (eta * 60) / t.rt)); continue;
@@ -1072,7 +1205,7 @@ function renderTrains() {
     const pos = trainPosition(t); if (!pos) continue;
     alive.add(t.uid); t.latlng = pos.latlng; t.bearingDeg = pos.bearing;
     const sel = state.selected && state.selected.type === 'train' && state.selected.uid === t.uid;
-    const flags = { at: t.status === 'at', wait: t.status === 'wait', est: t.source === 'timetable' || t.source === 'sim', sel };
+    const flags = { at: t.status === 'at', wait: t.status === 'wait', est: t.source === 'timetable' || t.source === 'sim' || t.source === 'train', sel };
     let m = state.markers.get(t.uid);
     if (!m) {
       const cls = 'train-icon ' + Object.keys(flags).filter(k => flags[k]).join(' ');
@@ -1094,10 +1227,97 @@ function trainTip(t) {
   const where = t.status === 'at' ? `停靠 ${nm(t.at)}` : t.status === 'wait' ? `${nm(t.at)} 待發車` : `${nm(t.from)} → ${nm(t.to)} · ${fmtEta(t.eta)}`;
   return `<b style="color:${esc(line.color)}">${esc(line.name)}</b> 往 ${esc(t.destName || nm(t.dest))}<br>${esc(where)}${t.source === 'platform' ? '' : '<br><small>班表推估</small>'}`;
 }
+/* ---------- 公車：GPS 點位（臺北市／新北市公開檔） ---------- */
+map.createPane('buses').style.zIndex = 440;
+const busLayer = L.layerGroup().addTo(map), busRouteLayer = L.layerGroup().addTo(map);
+for (const c of ACTIVE_BUS) state.bus.cities[c.id] = { cfg: c, list: null, at: null, err: null, routes: null, shown: 0, capped: false };
+const BUS_STATUS = { 0: '正常', 1: '車禍', 2: '故障', 3: '塞車', 4: '緊急求援', 5: '加油', 99: '非營運' };
+async function toggleBusCity(id, on) {
+  const B = state.bus.cities[id]; if (!B) return;
+  if (on) {
+    state.bus.on.add(id);
+    if (!B.routes) loadStatic('bus/' + id, 'routes').then(list => { B.routes = new Map(); for (const r of pickArray(list || [])) { B.routes.set(r.sub, r); if (!B.routes.has(r.id)) B.routes.set(r.id, r); } renderBuses(); }).catch(() => { B.routes = new Map(); });
+    state.bus.lastAt = 0; renderSystems();
+    if (state.lastLiveAt) refreshLive();
+  } else {
+    state.bus.on.delete(id); B.list = null; B.err = null;
+    if (state.bus.selected && state.bus.selected.city === id) closeDetail();
+    renderBuses(); renderSystems();
+  }
+  savePref('bus', [...state.bus.on]);
+}
+async function fetchBusCity(id) {
+  const B = state.bus.cities[id];
+  try {
+    const list = await fetchLive({ id, src: B.cfg.src, feed: B.cfg.feed || null });
+    B.list = list.map(b => ({ key: id + ':' + (b.BusID || b.PlateNumb || ''), plate: b.BusID || b.PlateNumb || '', route: String(b.RouteID ?? ''), goBack: String(b.GoBack ?? '2'), lat: num(b.Latitude), lon: num(b.Longitude), speed: num(b.Speed), az: num(b.Azimuth), status: String(b.BusStatus ?? ''), duty: String(b.DutyStatus ?? ''), time: b.DataTime || '' }))
+      .filter(b => b.lat != null && b.lon != null && Math.abs(b.lat) > 1 && b.status !== '99');
+    B.at = Date.now(); B.err = null;
+  } catch (e) { B.err = e.message; }
+}
+function busRadius() { const z = map.getZoom(); return z < 12 ? 3 : z < 15 ? 4.5 : 6; }
+function busRouteName(B, b) { const r = B.routes && (B.routes.get(b.route)); return r ? r.name + (r.subName && r.subName !== r.name ? '（' + r.subName + '）' : '') : '路線 ' + b.route; }
+function busDirText(B, b) { const r = B.routes && B.routes.get(b.route); if (!r) return b.goBack === '1' ? '返程' : b.goBack === '0' ? '去程' : ''; return b.goBack === '1' ? `返程 往 ${r.from}` : b.goBack === '0' ? `去程 往 ${r.to}` : ''; }
+function renderBuses() {
+  const keep = new Set(), bounds = map.getBounds().pad(0.15), CAP = 700, z = map.getZoom();
+  let total = 0;
+  for (const id of state.bus.on) {
+    const B = state.bus.cities[id]; B.shown = 0; B.capped = false; if (!B.list) continue;
+    if (z < 10) { B.capped = true; continue; }                              // 太遠不畫，省資源
+    for (const b of B.list) {
+      if (!bounds.contains([b.lat, b.lon])) continue;
+      if (total >= CAP) { B.capped = true; break; }
+      total++; B.shown++; keep.add(b.key);
+      let m = state.bus.markers.get(b.key);
+      const sel = state.bus.selected && state.bus.selected.key === b.key;
+      const style = { radius: busRadius() + (sel ? 3 : 0), color: sel ? (isDark() ? '#fff' : '#1c2430') : '#fff', weight: sel ? 2.5 : 1.2, fillColor: B.cfg.color, fillOpacity: .95 };
+      if (!m) {
+        m = L.circleMarker([b.lat, b.lon], { pane: 'buses', bubblingMouseEvents: false, ...style });
+        m.bindTooltip(() => busRouteName(B, m.bus), { direction: 'top', offset: [0, -6], className: 'bus-tip', sticky: false });
+        m.on('click', () => selectBus(id, m.bus.key));
+        m.addTo(busLayer); state.bus.markers.set(b.key, m);
+      } else { m.setLatLng([b.lat, b.lon]); m.setStyle(style); }
+      m.bus = b;
+    }
+  }
+  for (const [key, m] of state.bus.markers) if (!keep.has(key)) { busLayer.removeLayer(m); state.bus.markers.delete(key); }
+  if (state.bus.selected) { const B = state.bus.cities[state.bus.selected.city]; const b = B.list && B.list.find(x => x.key === state.bus.selected.key); if (b) showBusDetail(state.bus.selected.city, b, false); }
+}
+map.on('moveend zoomend', () => { if (state.bus.on.size) renderBuses(); });
+function selectBus(city, key) {
+  const B = state.bus.cities[city]; const b = B.list && B.list.find(x => x.key === key); if (!b) return;
+  closeDetail(); state.bus.selected = { city, key }; renderBuses();
+  showBusDetail(city, b, true);
+}
+function showBusDetail(city, b, drawRoute) {
+  const B = state.bus.cities[city], r = B.routes && B.routes.get(b.route);
+  const name = busRouteName(B, b), dir = busDirText(B, b);
+  const body = `<span class="line-tag" style="--c:${esc(B.cfg.color)}">${esc(B.cfg.name)}</span>
+    <div class="d-title">${esc(name)}</div><div class="d-sub">${esc(dir || '方向未知')}${r && r.from ? ` · ${esc(r.from)} ⇄ ${esc(r.to)}` : ''}</div>
+    <div class="d-state" style="--c:${esc(B.cfg.color)}"><b>${esc(BUS_STATUS[b.status] || '行駛中')}</b><div class="eta num">${b.speed != null ? Math.round(b.speed) + '<small>km/h</small>' : '—'}</div><div class="d-sub">車牌 ${esc(b.plate)}</div></div>
+    <div class="d-section"><dl class="kv"><dt>資料時間</dt><dd class="num">${esc(String(b.time).replace(/^\d{4}-\d{2}-\d{2}[T ]/, '').slice(0, 8) || '—')}</dd><dt>來源</dt><dd>${city === 'MOCKBUS' ? '示範資料' : '公車動態資訊系統公開檔（車機 GPS）'}</dd></dl></div>
+    <div class="d-section" id="busStops"><h3>沿途站牌</h3><p class="empty">讀取中…</p></div>`;
+  openDetail('公車', body);
+  const rid = r ? r.id : b.route;
+  loadStatic('bus/' + city, 'route/' + rid).then(rf => {
+    if (!rf || !state.bus.selected || state.bus.selected.key !== b.key) return;
+    const gb = b.goBack === '1' ? 1 : 0, stops = (rf.stops && (rf.stops[gb] || rf.stops[String(gb)])) || [];
+    let nearest = -1, best = Infinity;
+    stops.forEach((s, i) => { const d = haversine([b.lat, b.lon], [s.lat, s.lon]); if (d < best) { best = d; nearest = i; } });
+    const el = $('busStops'); if (el) el.innerHTML = `<h3>沿途站牌（${gb ? '返程' : '去程'}）</h3>` + (stops.length ? `<ul class="stops">${stops.map((s, i) => `<li><span class="n"><i style="--c:${esc(B.cfg.color)}"></i><span>${esc(s.name)}</span></span><span class="t ${i === nearest ? 'now' : ''}">${i === nearest ? '車在附近' : ''}</span></li>`).join('')}</ul>` : '<p class="empty">沒有這條路線的站牌資料。</p>');
+    if (drawRoute) {
+      busRouteLayer.clearLayers();
+      const wkt = rf.shape && (rf.shape[gb] || rf.shape[String(gb)] || rf.shape[0] || rf.shape['0']);
+      for (const part of (wkt ? parseWKT(wkt) : [])) L.polyline(part, { pane: 'lines', color: B.cfg.color, weight: 4, opacity: .75, interactive: false }).addTo(busRouteLayer);
+      for (const st of stops) L.circleMarker([st.lat, st.lon], { pane: 'stations', radius: 3, color: B.cfg.color, weight: 1.5, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(busRouteLayer);
+    }
+  }).catch(() => { const el = $('busStops'); if (el) el.innerHTML = '<h3>沿途站牌</h3><p class="empty">沒有這條路線的站牌資料（Actions 尚未產生 data/bus/）。</p>'; });
+}
 /* ---------- 側欄：系統清單 ---------- */
 function liveMeta(S) {
   const L2 = S.live;
-  if (S.mode === 'none') return '沒有此系統的時刻表或即時資料，僅顯示路線與車站';
+  if (S.mode === 'none') return S.cfg.kind === 'train' ? '沒有時刻表資料（data/ 裡缺 Trains.json），僅顯示路線與車站' : '沒有此系統的時刻表或即時資料，僅顯示路線與車站';
+  if (S.mode === 'train') return `依定期時刻表逐車模擬（沒有免費的即時誤點資料）${S.trains.length === 0 && state.lastLiveAt ? '（目前沒有班次）' : ''}`;
   const none = S.trains.length === 0 && state.lastLiveAt ? '（目前沒有班次）' : '';
   if (S.mode === 'timetable') return `沒有免費即時資料，依站別時刻表推估${none}`;
   if (S.mode === 'sim') return `沒有時刻表，依首末班車＋班距模擬${S.simNote}${S.opStatus && S.opStatus.status ? ` · 官網：${esc(S.opStatus.status)}` : ''}${none}`;
@@ -1109,9 +1329,11 @@ function liveMeta(S) {
   return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}`;
 }
 function renderSystems() {
-  const html = [];
+  const html = []; let lastGroup = null;
+  const GROUP_NAME = { metro: '捷運／輕軌', rail: '臺鐵／高鐵' };
   for (const cfg of ACTIVE_SYSTEMS) {
     const S = state.systems[cfg.id]; if (!S) continue;
+    const g = cfg.group || 'metro'; if (g !== lastGroup) { html.push(`<div class="grp">${GROUP_NAME[g] || g}</div>`); lastGroup = g; }
     let meta = S.status === 'loading' ? '載入路網中…' : S.status === 'error' ? `路網載入失敗：${esc(S.err || '')}` : esc(liveMeta(S));
     const chips = [...S.lines.values()].filter(l => !l.hidden).map(l =>
       `<button type="button" class="chip ${l.visible === false ? 'off' : ''}" data-line="${esc(l.key)}" style="--c:${esc(l.color)}" aria-pressed="${l.visible !== false}"><i></i>${esc(l.name)}<span class="cnt num">${countTrains(l.key) || ''}</span></button>`).join('');
@@ -1121,9 +1343,20 @@ function renderSystems() {
       <div class="sys-meta ${S.status === 'error' || S.live.feedErr ? 'err' : ''}">${meta}</div>
       <div class="lines">${chips}</div></div>`);
   }
+  html.push('<div class="grp">公車（即時 GPS）</div>');
+  for (const c of ACTIVE_BUS) {
+    const B = state.bus.cities[c.id];
+    const on = state.bus.on.has(c.id);
+    const meta = !on ? '勾選後才會抓車輛位置（每 20 秒，約 100 KB）' : B.err ? `讀取失敗：${esc(B.err)}` : !B.list ? '讀取中…' : `${B.shown} 輛在畫面內／共 ${B.list.length} 輛${B.capped ? '（太多，只畫一部分，請放大地圖）' : ''} · 資料 ${fmtTime(B.at)}`;
+    html.push(`<div class="sys-row"><div class="sys-top"><input type="checkbox" ${on ? 'checked' : ''} data-bus="${c.id}" aria-label="顯示${esc(c.name)}">
+      <button class="sys-name" type="button" data-buszoom="${c.id}">${esc(c.name)}</button></div>
+      <div class="sys-meta ${B.err ? 'err' : ''}">${meta}</div></div>`);
+  }
   $('systemsList').innerHTML = html.join('');
 }
 $('systemsList').addEventListener('click', e => {
+  const bt = e.target.closest('[data-bus]'); if (bt) { toggleBusCity(bt.dataset.bus, bt.checked); return; }
+  const bz = e.target.closest('[data-buszoom]'); if (bz) { const c = ACTIVE_BUS.find(x => x.id === bz.dataset.buszoom); if (c && c.center) map.flyTo(c.center, 12, { duration: .8 }); return; }
   const tg = e.target.closest('[data-toggle]'); if (tg) { const S = state.systems[tg.dataset.toggle]; S.visible = tg.checked; for (const g of Object.values(S.layers)) S.visible ? g.addTo(map) : map.removeLayer(g); savePref('hidden', Object.values(state.systems).filter(x => !x.visible).map(x => x.cfg.id)); return; }
   const zb = e.target.closest('[data-zoom]'); if (zb) { zoomSystem(zb.dataset.zoom); return; }
   const ch = e.target.closest('[data-line]'); if (ch) {
@@ -1137,7 +1370,8 @@ $('systemsList').addEventListener('click', e => {
 /* ---------- 詳細資料面板 ---------- */
 function openDetail(head, body) { $('detailHead').textContent = head; $('detailBody').innerHTML = body; $('detailPanel').hidden = false; }
 function closeDetail() {
-  $('detailPanel').hidden = true; state.follow = false; exitLayer.clearLayers();
+  $('detailPanel').hidden = true; state.follow = false; exitLayer.clearLayers(); busRouteLayer.clearLayers();
+  if (state.bus.selected) { state.bus.selected = null; renderBuses(); }
   if (state.selected && state.selected.type === 'train') { const m = state.markers.get(state.selected.uid); const el = m && m.getElement(); if (el) el.classList.remove('sel'); }
   state.selected = null;
 }
@@ -1158,10 +1392,11 @@ function showTrainDetail(uid) {
   else if (t.status === 'wait') stateHtml = `<b>起點站待發車</b><div class="eta">${esc(nm(t.at))}<small>約 ${fmtEta(t.eta)} 後發車</small></div>`;
   else stateHtml = `<b>行駛中</b><div class="eta">${esc(nm(t.from))} → ${esc(nm(t.to))}</div><div class="d-sub">抵達 ${esc(nm(t.to))}：${fmtEta(t.eta)}</div>`;
   const stops = (t.upcoming || []).map(u => `<li><span class="n"><i style="--c:${c}"></i><span>${esc(nm(u.station))}</span></span><span class="t num ${u.eta <= 0.05 ? 'now' : ''}">${fmtEta(u.eta)}</span></li>`).join('');
-  const srcLabel = t.source === 'platform' ? '臺北捷運公開資料「列車進站站名」（每 30 秒）＋站間行駛時間推算' : t.source === 'sim' ? '首末班車＋班距模擬（此系統沒有時刻表）' : '站別時刻表推估（此系統沒有免費即時資料）';
+  const srcLabel = t.source === 'platform' ? '臺北捷運公開資料「列車進站站名」（每 30 秒）＋站間行駛時間推算' : t.source === 'sim' ? '首末班車＋班距模擬（此系統沒有時刻表）' : t.source === 'train' ? 'TDX 定期時刻表逐車模擬（無即時誤點資料，臨時加班／停駛不會反映）' : '站別時刻表推估（此系統沒有免費即時資料）';
   const body = `
     <span class="line-tag" style="--c:${c}">${esc(S.cfg.name)} · ${esc(line.name)}</span>
-    <div class="d-title">往 ${esc(t.destName || nm(t.dest) || (t.direction != null ? '方向 ' + t.direction : ''))}</div>
+    <div class="d-title">${t.trainNo ? `${esc(t.trainType)} ${esc(t.trainNo)} 次 · ` : ''}往 ${esc(t.destName || nm(t.dest) || (t.direction != null ? '方向 ' + t.direction : ''))}</div>
+    ${t.originName ? `<div class="d-sub">${esc(t.originName)} → ${esc(t.destName)}</div>` : ''}
     ${t.headSign && t.headSign !== t.destName ? `<div class="d-sub">${esc(t.headSign)}</div>` : ''}
     <div class="d-state" style="--c:${c}">${stateHtml}</div>
     ${stops ? `<div class="d-section"><h3>接下來停靠</h3><ul class="stops">${stops}</ul></div>` : ''}
@@ -1172,7 +1407,7 @@ function showTrainDetail(uid) {
     </dl></div>
     ${t.ambiguous ? '<p class="d-sub" style="margin-top:12px">這個月台同時屬於兩條路線，資料無法分辨是哪一條，暫依第一條顯示。</p>' : ''}
     ${t.hops ? `<p class="d-sub" style="margin-top:12px">這列車已連續 ${t.hops} 站沒被進站資料看到，位置為純推算。</p>` : ''}
-    <p class="d-sub" style="margin-top:12px">${t.source === 'platform' ? '離開月台後的位置由站間行駛時間推算，實際可能略有前後。' : '依班表推估，未考慮誤點與臨時調度。'}</p>
+    <p class="d-sub" style="margin-top:12px">${t.source === 'platform' ? '離開月台後的位置由站間行駛時間推算，實際可能略有前後。' : t.source === 'train' ? '依定期時刻表模擬；台鐵誤點很常見，實際位置可能落後圖上位置。' : '依班表推估，未考慮誤點與臨時調度。'}</p>
     <div class="btn-row"><button type="button" class="btn ${state.follow ? 'on' : ''}" id="btnFollow">${state.follow ? '跟隨中' : '跟隨這列車'}</button></div>`;
   openDetail(line.name, body);
   $('btnFollow').onclick = () => { state.follow = !state.follow; $('btnFollow').classList.toggle('on', state.follow); $('btnFollow').textContent = state.follow ? '跟隨中' : '跟隨這列車'; if (state.follow) { followSelected(false); if (map.getZoom() < 14) map.setZoom(15); } };
@@ -1213,8 +1448,13 @@ function selectStation(sysId, id) {
   // 進站資料：正在月台的列車，以及推算中即將抵達的列車
   const here = state.trains.filter(t => t.sys === sysId && ((t.status === 'at' && t.at === id) || (t.status === 'moving' && t.to === id))).sort((a, b) => a.eta - b.eta);
   for (const t of here) rows.push(`<li><span class="n"><i style="--c:${colorOf(t)}"></i><span>往 ${esc(t.destName || nm(t.dest))}</span></span><span class="t num ${t.status === 'at' ? 'now' : ''}">${t.status === 'at' ? '進站中' : '約 ' + fmtEta(t.eta)}</span></li>`);
+  // 台鐵／高鐵：接下來兩小時的發車
+  if (S.mode === 'train') {
+    rows.length = 0;
+    for (const d of stationDepartures(S, S.trainData, id, new Date(), 120).slice(0, 10)) rows.push(`<li><span class="n"><i style="--c:${esc(S.cfg.color)}"></i><span>${esc(d.time)} ${esc(d.type)} ${esc(d.no)} 次 往${esc(d.destName)}</span></span><span class="t num ${d.eta <= 1 ? 'now' : ''}">${fmtEta(d.eta)}</span></li>`);
+  }
   // 時刻表：下幾班
-  if (!rows.length) {
+  if (!rows.length && S.mode !== 'train') {
     const srcSys = new Set([sysId]); lines.forEach(l => l.alsoIn.forEach(x => srcSys.add(x)));
     for (const sid of srcSys) {
       const SS = state.systems[sid]; if (!SS || !SS.timetable) continue;
@@ -1224,7 +1464,7 @@ function selectStation(sysId, id) {
     }
   }
   const body = `${tags}<div class="d-title">${esc(st.name)}</div><div class="d-sub">${esc(S.cfg.name)} · ${esc(id)}${st.raw && st.raw.StationAddress ? '<br>' + esc(st.raw.StationAddress) : ''}</div>
-    <div class="d-section"><h3>${S.mode === 'platform' ? '月台與即將抵達' : '下一班列車'}</h3>${rows.length ? `<ul class="stops">${rows.join('')}</ul>` : `<p class="empty">${S.mode === 'platform' ? '目前沒有列車在這一站的月台，也沒有推算中即將抵達的列車。' : '目前沒有這一站的班次資料。'}</p>`}</div>
+    <div class="d-section"><h3>${S.mode === 'platform' ? '月台與即將抵達' : S.mode === 'train' ? '接下來兩小時發車' : '下一班列車'}</h3>${rows.length ? `<ul class="stops">${rows.join('')}</ul>` : `<p class="empty">${S.mode === 'platform' ? '目前沒有列車在這一站的月台，也沒有推算中即將抵達的列車。' : '目前沒有這一站的班次資料。'}</p>`}</div>
     ${exitsHtml(exits)}
     <div class="d-section"><button type="button" class="linkish" id="btnCenter">在地圖上置中</button></div>`;
   openDetail('車站', body);
@@ -1291,6 +1531,8 @@ map.on('click', () => { if (state.selected) closeDetail(); });
   for (const S of Object.values(state.systems)) if (S.status === 'ok') drawSystem(S);
   const okCount = Object.values(state.systems).filter(S => S.status === 'ok').length;
   if (!okCount) { toast('還沒有路網資料：到 GitHub repo 的 Actions 頁籤，手動 Run workflow「更新資料並部署」一次，跑完會自動產生 data/ 並重新部署（步驟見 README）', 15000); $('statusText').textContent = '路網載入失敗（data/ 尚未產生）'; return; }
+  for (const id of loadPref('bus') || []) if (state.bus.cities[id]) state.bus.on.add(id);
+  for (const id of state.bus.on) toggleBusCity(id, true);
   const want = Q.get('sys'), saved = loadPref('view');
   for (const id of loadPref('hidden') || []) { const S = state.systems[id]; if (S && S.status === 'ok') { S.visible = false; for (const g of Object.values(S.layers)) map.removeLayer(g); } }
   if (want && state.systems[want] && state.systems[want].status === 'ok') zoomSystem(want);

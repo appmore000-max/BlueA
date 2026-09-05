@@ -7,7 +7,9 @@
 | 網站 | GitHub Pages | 免費（公開 repo） |
 | 路網資料（路線、車站、線型、時刻表） | GitHub Actions 每週從 TDX 抓一次存進 `data/` | Actions 公開 repo 免費；TDX 註冊免費，每週約 70 次呼叫，只用到免費額度的零頭 |
 | 臺北捷運即時列車 | 臺北市資料大平臺的「臺北捷運列車到站站名」公開 JSON（免金鑰、每 30 秒） | 免費 |
-| 幫即時資料加 CORS 的小代理 | Cloudflare Worker（貼一個檔案即可） | 免費方案每天 10 萬次請求，本站每個開著的分頁每 15 秒 1 次 |
+| 臺鐵、高鐵 | TDX 定期時刻表（Actions 每週抓，前端逐車模擬位置） | 免費會員額度內 |
+| 臺北市、新北市公車 | 公車動態資訊系統的公開 GPS 檔（免金鑰，每 20 秒）＋ 路線站牌公開檔 | 免費 |
+| 幫即時資料加 CORS 的小代理 | Cloudflare Worker（貼一個檔案即可） | 免費方案每天 10 萬次請求，本站每個開著的分頁每 15 秒 1～3 次 |
 
 之前的 Netlify Function 版本已整個拿掉。**為什麼要改**：TDX 從 2024 年起改成點數制（基礎服務 1 點＝1,500 次呼叫，超出免費點數就要買點），免費會員每月的點數很少；即時看板每 15 秒抓 4 個系統一天就兩萬多次，一定會超出，所以即時資料不能再走 TDX。這一版 TDX 只用來抓「路網靜態資料」，一週一次。
 
@@ -19,7 +21,13 @@
 | 新北捷運（環狀線等）、淡海輕軌、安坑輕軌、桃園捷運、高雄捷運、高雄輕軌 | 站別時刻表推估 | 這些系統沒有免費的即時資料；用 TDX 的站別時刻表算「現在應該有哪些車、在哪裡」（虛線框標示） |
 | 臺中捷運 | 首末班車＋班距模擬 | TDX 沒有中捷的站別時刻表；用首末班車與班距模擬（虛線框標示）。設了 Worker 之後會每 5 分鐘讀中捷官網首頁的「營運狀態／目前班距」，用當下的實際班距重新合成 |
 
+| 台灣高鐵 | THSR | ✓ | TDX 定期時刻表逐車模擬（高鐵準點率高，模擬相當接近實際） |
+| 臺鐵 | TRA | ✓（全部路線與支線） | TDX 定期時刻表逐車模擬；**沒有免費的即時誤點資料**，誤點時實際位置會落後圖上位置；臨時加班、停駛不會反映 |
+| 臺北市公車、新北市公車 | TPE、NTPC | 路線站牌與線型（點車才載入） | **真實車機 GPS**，每 20 秒；預設關閉，面板勾選後才抓（每次約 100 KB） |
+
 實際哪些系統有時刻表／班距資料，以 Actions 抓下來的 `data/index.json` 為準；程式會依資料自動選擇模式，左側面板會寫清楚每個系統目前是哪一種。
+
+臺鐵、高鐵的即時誤點在 TDX 上有（`TrainLiveBoard`），但免費會員每分鐘 5 次的限制與點數都不夠拿來輪詢；其他縣市的公車動態也都只在 TDX 上，同樣的理由暫不接。若之後付費訂閱 TDX，可以再把這些接回來。
 
 ## 介面
 
@@ -37,9 +45,9 @@
 2. **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**。
 3. 到 [TDX](https://tdx.transportdata.tw/) 註冊（免費）→ 會員中心 → 資料服務 → API 金鑰，取得 Client Id / Secret。
    **Settings → Secrets and variables → Actions → New repository secret** 新增 `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET`。
-4. **Actions → 「更新資料並部署」→ Run workflow**。TDX 免費會員每分鐘只能呼叫 5 次，程式會每 13 秒抓一筆，整個 workflow 約 15～20 分鐘才會跑完（這是正常的）。跑完後 `data/` 會被 commit 進 repo，網站上線（網址在 Settings → Pages 看）。之後每週一凌晨會自動重抓一次。
+4. **Actions → 「更新資料並部署」→ Run workflow**。TDX 免費會員每分鐘只能呼叫 5 次，程式會每 13 秒抓一筆，加上台鐵、高鐵與公車的檔案，整個 workflow 約 20～25 分鐘才會跑完（這是正常的）。跑完後 `data/` 會被 commit 進 repo，網站上線（網址在 Settings → Pages 看）。之後每週一凌晨會自動重抓一次。
 5. **Cloudflare Worker**（臺北捷運即時資料用）：到 [Cloudflare](https://dash.cloudflare.com/) 註冊（免費、不用信用卡）→ Workers & Pages → Create → Start with Hello World → Deploy → Edit code → 把 `worker.js` 全部內容貼上取代 → Deploy → 複製網址（像 `https://xxx.你的帳號.workers.dev`）。
-6. 打開 `index.html`，把網址填到最上面的 `CONFIG.liveProxy`，commit → Actions 會自動重新部署。
+6. 打開 repo 裡的 `config.json`，把網址填進 `liveProxy` 的引號裡，例如 `{ "liveProxy": "https://mrt-live.xxx.workers.dev" }`，commit → Actions 會自動重新部署。之後更新 `index.html` 也不會把這個設定洗掉。
 
 第 5、6 步可以先跳過：程式會先試著讓瀏覽器直接抓公開資料，若被 CORS 擋住，左側面板會告訴你要做這兩步。
 
@@ -52,6 +60,18 @@ node dev-proxy.js               # http://localhost:8888（/live 就是本機版�
 ```
 
 不抓資料先看畫面：`http://localhost:8888/?mock=1`（三條模擬路線分別示範進站資料推算、時刻表推估、班距模擬；`&speed=5` 加速）。
+
+## 臺鐵／高鐵是怎麼畫的
+
+Actions 每週從 TDX 抓「定期時刻表」（每一車次的全部停靠站與到離站時間），整理成精簡的 `data/TRA/Trains.json`、`data/THSR/Trains.json`（台鐵約一千多車次）。前端每秒依現在時刻判斷每一車次在哪兩站之間、走了幾成，沿 TDX 的軌道線型內插；停靠中就停在站上，發車前 3 分鐘出現在起點站，到終點後消失。跨線行駛（例如台北→花蓮經西部幹線轉東部幹線）以「同時包含前後兩站的路線」內插。點車站可看接下來兩小時的發車。
+
+## 公車是怎麼畫的
+
+臺北市與新北市公車動態資訊系統提供免金鑰的公開檔：`GetBusData.gz` 是全市所有營運中車輛的 GPS（車牌、附屬路線代碼、去返程、經緯度、速度、方位角），每 20 秒更新一次；路線、站牌、線型也有對應的公開檔，Actions 每週抓下來整理成 `data/bus/<城市>/routes.json` 與每條路線一個的 `route/<主路線ID>.json`。
+
+- Worker 把 gzip 原樣轉送（不解壓、不花 CPU），瀏覽器自己解壓後只畫地圖範圍內的車，最多 700 輛；太遠或太多會提示放大。
+- 點車輛：路線、方向、車牌、速度、狀態、資料時間，並載入該方向的站牌與線型畫在地圖上，標出車輛最靠近的站牌。
+- 只有這兩市有免金鑰的 GPS 公開檔；預設關閉，勾了才抓，避免手機吃流量。
 
 ## 班表推估的規則
 
@@ -83,13 +103,14 @@ node dev-proxy.js               # http://localhost:8888（/live 就是本機版�
 ## 檔案
 
 ```
-index.html                  前端（CSS + 純邏輯 CORE + 地圖 APP，同一檔）；CONFIG 在 APP 段最上面
+index.html                  前端（CSS + 純邏輯 CORE + 地圖 APP，同一檔）
+config.json                 你的設定（Worker 網址等），開頁時覆蓋 index.html 裡的 CONFIG 預設值
 manifest.json / icon-*.png  加到主畫面用的名稱與圖示
 worker.js                   Cloudflare Worker：加 CORS 的小代理（只允許清單內的公開來源，10 秒快取）
 scripts/fetch-static.js     從 TDX 抓路網資料存到 data/（Actions 每週跑）
 .github/workflows/deploy.yml  抓資料 + commit + 部署 GitHub Pages
 dev-proxy.js                本機預覽用靜態伺服器 + 本機版 worker
-data/                       Actions 產生（路線、車站、線型、站間時間、時刻表、首末班車、班距、出口、index.json、holidays.json）
+data/                       Actions 產生（捷運：路線、車站、線型、站間時間、時刻表、首末班車、班距、出口；台鐵高鐵：路網 + Trains.json；bus/：公車路線與站牌；index.json、holidays.json）
 .env.example                本機抓資料用的金鑰範本（.env 已在 .gitignore）
 ```
 
@@ -97,6 +118,7 @@ data/                       Actions 產生（路線、車站、線型、站間�
 
 - 底圖用 OpenStreetMap 的標準圖磚（免金鑰；CARTO 的淺色底圖已改成要 API 金鑰），程式用 CSS 把它淡化。OSM 圖磚的使用政策是給小流量網站用的，若之後人多，可換成任何提供 XYZ 圖磚的服務，只要改 `index.html` 裡 `L.tileLayer(...)` 那一行。
 - `data/index.json` 會記錄每個系統每種資料抓到幾筆；若看到 `error: HTTP 429`，代表撞到 TDX 的每分鐘 5 次限制，重跑一次 workflow 即可。
+- 台鐵定期時刻表一份約十幾 MB，TDX 以「計量」計費（基礎服務 150 MB＝1 點），一週一次遠低於免費點數；公車靜態檔不經 TDX，但 `data/bus/` 兩市加起來約幾十 MB、兩千多個檔，repo 會比較大。不想要公車可以在 workflow 加環境變數 `BUS_CITIES=`（空值）。
 
 - 臺北捷運公開資料只涵蓋五條主線（含支線），環狀線屬新北捷運，走時刻表推估。
 - 時刻表／班距推估不知道誤點與臨時調度，看起來永遠準點。
