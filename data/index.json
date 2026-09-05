@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-05T00:00:31.010Z",
+ "generatedAt": "2026-09-05T00:53:09.638Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/",
  "systems": {
   "TRTC": {
@@ -8,86 +8,86 @@
    "StationOfRoute": 22,
    "StationOfLine": 5,
    "Shape": 5,
-   "S2STravelTime": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "S2STravelTime": 11,
+   "FirstLastTimetable": 217,
+   "Frequency": 22
   },
   "NTMC": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 1,
+   "Station": 14,
+   "StationOfRoute": 2,
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": 1,
+   "StationTimeTable": 50,
+   "FirstLastTimetable": 26,
+   "Frequency": 2
   },
   "NTDLRT": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 1,
+   "Station": 14,
+   "StationOfRoute": 4,
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "StationTimeTable": 68,
+   "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, "
   },
   "NTALRT": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 1,
+   "Station": 9,
+   "StationOfRoute": 4,
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "StationTimeTable": 32,
+   "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, "
   },
   "TYMC": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 1,
+   "Station": 22,
+   "StationOfRoute": 5,
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": 2,
+   "StationTimeTable": 128,
+   "FirstLastTimetable": 160,
+   "Frequency": 1
   },
   "TMRT": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 1,
+   "Station": 18,
+   "StationOfRoute": 2,
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": 2,
+   "StationTimeTable": "error: HTTP 400 {\"Message\":\"RailSystem: 'TMRT' is not accepted but TRTC, KRTC, TYMC, KL",
+   "FirstLastTimetable": 34,
+   "Frequency": 2
   },
   "KRTC": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
-   "StationOfLine": "error",
-   "Shape": "error",
-   "S2STravelTime": "error",
-   "StationTimeTable": "error",
-   "FirstLastTimetable": "error",
-   "Frequency": "error"
+   "Line": 2,
+   "Station": 39,
+   "StationOfRoute": 4,
+   "StationOfLine": 2,
+   "Shape": 2,
+   "S2STravelTime": 4,
+   "StationTimeTable": 296,
+   "FirstLastTimetable": 304,
+   "Frequency": 8
   },
   "KLRT": {
-   "Line": "error",
-   "Station": "error",
-   "StationOfRoute": "error",
+   "Line": 1,
+   "Station": 38,
+   "StationOfRoute": 2,
    "StationOfLine": 1,
    "Shape": 1,
    "S2STravelTime": 2,
    "StationTimeTable": 152,
    "FirstLastTimetable": 152,
-   "Frequency": "error"
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'KLRT' is not accepted but TRTC, KRTC, TYMC, TM"
   }
  }
 }
