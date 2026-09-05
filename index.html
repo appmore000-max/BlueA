@@ -666,6 +666,8 @@ const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyl
   buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
+// 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
+// 開頁時會自動讀進來覆蓋這裡的值；這樣之後更新 index.html 也不會把設定洗掉
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
   liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
@@ -682,7 +684,17 @@ setHolidays(CONFIG.holidays);
 const Q = new URLSearchParams(location.search);
 const MOCK = Q.get('mock') === '1';
 const DATA_BASE = (Q.get('data') || CONFIG.dataBase).replace(/\/$/, '');
-const LIVE_PROXY = (Q.get('proxy') ?? (CONFIG.liveProxy || (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? '/live' : ''))).replace(/\/$/, '');
+const computeProxy = () => (Q.get('proxy') ?? (CONFIG.liveProxy || (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? '/live' : ''))).replace(/\/$/, '');
+let LIVE_PROXY = computeProxy();
+async function loadConfig() {                       // config.json 可覆蓋 CONFIG 的任何欄位
+  if (MOCK) return;
+  try {
+    const res = await fetch('./config.json', { cache: 'no-store' }); if (!res.ok) return;
+    const c = await res.json(); if (!c || typeof c !== 'object') return;
+    Object.assign(CONFIG, c); LIVE_PROXY = computeProxy();
+    if (c.holidays) setHolidays(CONFIG.holidays);
+  } catch (e) { /* 沒有 config.json 就用 index.html 裡的預設 */ }
+}
 const REFRESH_MS = Math.max(8000, (Number(Q.get('refresh')) || 15) * 1000);
 
 // live:'platform' = 有免費的「列車進站」即時公開資料；其他系統依 data/ 內有無時刻表自動選擇：時刻表推估 → 首末班車＋班距模擬 → 僅畫路線
@@ -1268,6 +1280,7 @@ map.on('click', () => { if (state.selected) closeDetail(); });
 
 /* ---------- 啟動 ---------- */
 (async function init() {
+  await loadConfig();
   if (MOCK) $('footNote').textContent = '目前為示範資料模式（?mock=1）：路網與列車皆為模擬，不代表真實營運。';
   else {
     fetch(`${DATA_BASE}/index.json`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.generatedAt) { state.dataInfo = d; $('footNote').textContent += ` 路網資料產生於 ${new Date(d.generatedAt).toLocaleDateString('zh-TW')}。`; } }).catch(() => {});
