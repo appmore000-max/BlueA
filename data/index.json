@@ -1,0 +1,93 @@
+{
+ "generatedAt": "2026-09-05T00:00:31.010Z",
+ "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/",
+ "systems": {
+  "TRTC": {
+   "Line": 5,
+   "Station": 121,
+   "StationOfRoute": 22,
+   "StationOfLine": 5,
+   "Shape": 5,
+   "S2STravelTime": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "NTMC": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "NTDLRT": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "NTALRT": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "TYMC": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "TMRT": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "KRTC": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": "error",
+   "Shape": "error",
+   "S2STravelTime": "error",
+   "StationTimeTable": "error",
+   "FirstLastTimetable": "error",
+   "Frequency": "error"
+  },
+  "KLRT": {
+   "Line": "error",
+   "Station": "error",
+   "StationOfRoute": "error",
+   "StationOfLine": 1,
+   "Shape": 1,
+   "S2STravelTime": 2,
+   "StationTimeTable": 152,
+   "FirstLastTimetable": 152,
+   "Frequency": "error"
+  }
+ }
+}
