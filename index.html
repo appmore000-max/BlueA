@@ -760,11 +760,11 @@ const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyl
   buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
-// 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"":"https://xxx.workers.dev"}），
+// 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
 // 開頁時會自動讀進來覆蓋這裡的值；這樣之後更新 index.html 也不會把設定洗掉
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
-  liveProxy: 'https://late-hill-b6d1.qqaawwss6574.workers.dev/',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+  liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
   // 這份清單只在抓不到時使用，也可以在這裡加自己想要的日期
@@ -793,10 +793,11 @@ const REFRESH_MS = Math.max(8000, (Number(Q.get('refresh')) || 15) * 1000);
 
 // live:'platform' = 有免費的「列車進站」即時公開資料；其他系統依 data/ 內有無時刻表自動選擇：時刻表推估 → 首末班車＋班距模擬 → 僅畫路線
 const SYSTEMS = [
-  { id: 'TRTC',   name: '臺北捷運', color: '#1c2430', live: 'platform', src: 'trtc', feed: 'https://tcgmetro.blob.core.windows.net/stationnames/stations.json' },
-  { id: 'NTMC',   name: '新北捷運', color: '#c48c2b' },
-  { id: 'NTDLRT', name: '淡海輕軌', color: '#2e8b57', speed: 7 },
-  { id: 'NTALRT', name: '安坑輕軌', color: '#7b5ea7', speed: 7 },
+  // family:'tpe' = 同一個路網體系，同一條線可能同時出現在兩家資料裡（環狀線在北捷與新北捷都有），只在同 family 內合併重複路線
+  { id: 'TRTC',   name: '臺北捷運', color: '#1c2430', live: 'platform', src: 'trtc', feed: 'https://tcgmetro.blob.core.windows.net/stationnames/stations.json', family: 'tpe' },
+  { id: 'NTMC',   name: '新北捷運', color: '#c48c2b', family: 'tpe' },
+  { id: 'NTDLRT', name: '淡海輕軌', color: '#2e8b57', speed: 7, family: 'tpe' },
+  { id: 'NTALRT', name: '安坑輕軌', color: '#7b5ea7', speed: 7, family: 'tpe' },
   { id: 'TYMC',   name: '桃園捷運', color: '#8a5ba6' },
   { id: 'TMRT',   name: '臺中捷運', color: '#5cb531', statusSrc: 'tmrt_status' },   // 官網的營運狀態與目前班距（僅經代理）
   { id: 'KRTC',   name: '高雄捷運', color: '#d0021b' },
@@ -1005,10 +1006,12 @@ function dedupeSharedLines() {
   const ids = ACTIVE_SYSTEMS.map(c => c.id);
   for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
     const A = state.systems[ids[i]], B = state.systems[ids[j]]; if (!A || !B || A.status !== 'ok' || B.status !== 'ok') continue;
+    if (!A.cfg.family || A.cfg.family !== B.cfg.family) continue;   // 不同體系的路線代碼會撞名（北捷 R02… vs 高捷 R10…），不能比
     for (const bl of B.lines.values()) {
       const al = A.lines.get(bl.id); if (!al || bl.hidden || al.hidden || al.stationSet.size < 2 || bl.stationSet.size < 2) continue;
-      let inter = 0; for (const id of bl.stationSet) if (al.stationSet.has(id)) inter++;
-      if (inter >= 0.5 * Math.min(al.stationSet.size, bl.stationSet.size)) {
+      let inter = 0, sameName = 0;
+      for (const id of bl.stationSet) if (al.stationSet.has(id)) { inter++; if ((A.stations.get(id) || {}).name === (B.stations.get(id) || {}).name) sameName++; }
+      if (inter >= 0.5 * Math.min(al.stationSet.size, bl.stationSet.size) && sameName >= 0.5 * inter) {
         bl.hidden = true; bl.mergedInto = al.key; al.alsoIn.push(B.cfg.id);
         if (!al.parts.length && bl.parts.length) al.parts = bl.parts;
         if (!al.routes.length && bl.routes.length) { al.routes = bl.routes; buildLineGraph(al); }
