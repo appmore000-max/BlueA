@@ -27,7 +27,7 @@
 2. **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**。
 3. 到 [TDX](https://tdx.transportdata.tw/) 註冊（免費）→ 會員中心 → 資料服務 → API 金鑰，取得 Client Id / Secret。
    **Settings → Secrets and variables → Actions → New repository secret** 新增 `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET`。
-4. **Actions → 「更新資料並部署」→ Run workflow**。跑完後 `data/` 會被 commit 進 repo，網站上線（網址在 Settings → Pages 看）。之後每週一凌晨會自動重抓一次。
+4. **Actions → 「更新資料並部署」→ Run workflow**。TDX 免費會員每分鐘只能呼叫 5 次，程式會每 13 秒抓一筆，整個 workflow 約 15～20 分鐘才會跑完（這是正常的）。跑完後 `data/` 會被 commit 進 repo，網站上線（網址在 Settings → Pages 看）。之後每週一凌晨會自動重抓一次。
 5. **Cloudflare Worker**（臺北捷運即時資料用）：到 [Cloudflare](https://dash.cloudflare.com/) 註冊（免費、不用信用卡）→ Workers & Pages → Create → Start with Hello World → Deploy → Edit code → 把 `worker.js` 全部內容貼上取代 → Deploy → 複製網址（像 `https://xxx.你的帳號.workers.dev`）。
 6. 打開 `index.html`，把網址填到最上面的 `CONFIG.liveProxy`，commit → Actions 會自動重新部署。
 
@@ -77,6 +77,9 @@ data/                       Actions 產生（路線、車站、線型、站間�
 ```
 
 ## 限制與注意
+
+- 底圖用 OpenStreetMap 的標準圖磚（免金鑰；CARTO 的淺色底圖已改成要 API 金鑰），程式用 CSS 把它淡化。OSM 圖磚的使用政策是給小流量網站用的，若之後人多，可換成任何提供 XYZ 圖磚的服務，只要改 `index.html` 裡 `L.tileLayer(...)` 那一行。
+- `data/index.json` 會記錄每個系統每種資料抓到幾筆；若看到 `error: HTTP 429`，代表撞到 TDX 的每分鐘 5 次限制，重跑一次 workflow 即可。
 
 - 臺北捷運公開資料只涵蓋五條主線（含支線），環狀線屬新北捷運，走時刻表推估。
 - 時刻表／班距推估不知道誤點與臨時調度，看起來永遠準點；國定假日依 TDX 資料的 ServiceDay 判斷。

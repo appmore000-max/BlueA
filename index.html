@@ -120,6 +120,7 @@
   .st-label{background:rgba(255,255,255,.85);border:0;box-shadow:none;color:var(--ink);font-family:var(--font);font-size:11px;padding:1px 5px;border-radius:4px;font-weight:500}
   .st-label::before{display:none}
   .leaflet-container{font-family:var(--font)}
+  .leaflet-tile-pane .basemap{filter:grayscale(1) brightness(1.07) contrast(.9);opacity:.8}
   .leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.7)}
   .leaflet-bottom.leaflet-right .leaflet-control-zoom{margin-bottom:calc(14px + var(--safe-b))}
 
@@ -686,9 +687,10 @@ async function fetchLive(cfg) {
 const isMobile = () => window.matchMedia('(max-width:760px)').matches;
 const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([23.75, 120.95], isMobile() ? 7 : 8);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> · 資料 <a href="https://data.taipei/">臺北捷運</a>／<a href="https://tdx.transportdata.tw/">TDX</a>',
-  subdomains: 'abcd', maxZoom: 19
+// 底圖：OpenStreetMap 標準圖磚（免金鑰；CARTO 的底圖已改為需要 API 金鑰），用 CSS 淡化讓路線跳出來
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · 資料 <a href="https://data.taipei/">臺北捷運</a>／<a href="https://tdx.transportdata.tw/">TDX</a>',
+  maxZoom: 19, className: 'basemap'
 }).addTo(map);
 map.createPane('lines').style.zIndex = 410;
 map.createPane('stations').style.zIndex = 430;
@@ -713,7 +715,7 @@ async function loadSystem(cfg) {
   try {
     const get = k => loadStatic(cfg.id, k).catch(() => null);
     const [lines, stations, routes, sol, shapes, s2s] = await Promise.all(['Line', 'Station', 'StationOfRoute', 'StationOfLine', 'Shape', 'S2STravelTime'].map(get));
-    if (!lines || !stations) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json（請先執行 GitHub Actions「更新靜態資料」）`);
+    if (!lines || !stations) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json：repo 裡還沒有 data/ 資料夾。到 GitHub 的 Actions 頁籤，選「更新資料並部署」按 Run workflow 跑一次（需先在 Settings → Secrets 填 TDX_CLIENT_ID / TDX_CLIENT_SECRET）`);
     buildSystem(S, lines, stations, routes, sol || [], shapes || [], s2s || []);
     if (!S.lines.size) throw new Error('沒有路線資料');
     if (cfg.live === 'platform') { S.mode = 'platform'; S.nameIdx = buildNameIndex(S); }
@@ -1135,7 +1137,7 @@ map.on('click', () => { if (state.selected) closeDetail(); });
   dedupeSharedLines();
   for (const S of Object.values(state.systems)) if (S.status === 'ok') drawSystem(S);
   const okCount = Object.values(state.systems).filter(S => S.status === 'ok').length;
-  if (!okCount) { toast('路網資料載入失敗：請先在 GitHub 執行 Actions「更新資料並部署」產生 data/ 資料夾（見 README）', 12000); $('statusText').textContent = '路網載入失敗'; return; }
+  if (!okCount) { toast('還沒有路網資料：到 GitHub repo 的 Actions 頁籤，手動 Run workflow「更新資料並部署」一次，跑完會自動產生 data/ 並重新部署（步驟見 README）', 15000); $('statusText').textContent = '路網載入失敗（data/ 尚未產生）'; return; }
   const want = Q.get('sys');
   if (want && state.systems[want] && state.systems[want].status === 'ok') zoomSystem(want); else fitAll();
   applyLabels();
