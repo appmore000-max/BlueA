@@ -892,7 +892,7 @@ const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyl
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
   title: '',            // 想改網站名稱就填這裡（或 config.json 的 title），空白＝用預設的「台灣大眾運輸即時地圖」
-  liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+  liveProxy: 'https://late-hill-b6d1.qqaawwss6574.workers.dev/',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
   // 這份清單只在抓不到時使用，也可以在這裡加自己想要的日期
