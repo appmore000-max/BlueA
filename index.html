@@ -10,8 +10,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="捷運即時">
+<meta name="apple-mobile-web-app-title" content="運輸即時">
 <title>台灣大眾運輸即時地圖</title>
+<meta name="description" content="全台捷運、輕軌、臺鐵、高鐵與臺北新北公車的即時／推估位置地圖">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -196,7 +197,7 @@
 <div id="map" aria-label="地圖"></div>
 
 <header class="topbar">
-  <div class="brand"><span class="live-dot" id="liveDot"></span><h1>台灣大眾運輸即時地圖</h1></div>
+  <div class="brand"><span class="live-dot" id="liveDot"></span><h1 id="brandTitle">台灣大眾運輸即時地圖</h1></div>
   <div class="status" id="statusText">載入路網資料…</div>
   <div class="spacer"></div>
   <button class="btn mobile-only" id="btnSystems" type="button">系統</button>
@@ -308,10 +309,111 @@ const CORE = (() => {
     }
     return out;
   }
-  function prepPart(part) {                          // 加上累積里程 part.cum
-    const cum = [0];
-    for (let i = 1; i < part.length; i++) cum.push(cum[i - 1] + haversine(part[i - 1], part[i]));
-    part.cum = cum; return part;
+  function prepPart(part) {                          // 加上累積里程 part.cum 與範圍框 part.bbox
+    const cum = [0]; let s = 90, n = -90, w = 180, e = -180;
+    for (let i = 0; i < part.length; i++) { const [la, lo] = part[i]; if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo; if (i) cum.push(cum[i - 1] + haversine(part[i - 1], part[i])); }
+    part.cum = cum; part.bbox = [s, w, n, e]; return part;
+  }
+  const nearBbox = (part, pt, tolM) => { const b = part.bbox; if (!b) return true; const dLat = tolM / 110540, dLon = tolM / (111320 * Math.cos(toRad(pt[0])) || 1); return pt[0] >= b[0] - dLat && pt[0] <= b[2] + dLat && pt[1] >= b[1] - dLon && pt[1] <= b[3] + dLon; };
+  function sliceChain(part, c1, c2) {                // 取折線在里程 c1..c2 之間的點（c2<c1 則反向）
+    const cum = part.cum, total = cum[cum.length - 1]; const lo = Math.max(0, Math.min(c1, c2)), hi = Math.min(total, Math.max(c1, c2));
+    const pts = [pointAtChain(part, lo).latlng];
+    for (let i = 0; i < part.length; i++) if (cum[i] > lo && cum[i] < hi) pts.push(part[i]);
+    pts.push(pointAtChain(part, hi).latlng);
+    if (c2 < c1) pts.reverse();
+    return pts;
+  }
+  // 相鄰兩站之間的實際軌道幾何：先在原始線段裡找同時靠近兩站的那一段，找不到再用縫合後的長鏈，都沒有就直線
+  function hopGeometry(line, stations, A, B, tol) {
+    const a = stations.get(A), b = stations.get(B); if (!a || !b) return null;
+    const straight = haversine(a.latlng, b.latlng); let best = null;
+    for (const parts of [line.rawParts || [], line.parts || []]) {
+      for (const part of parts) {
+        if (!nearBbox(part, a.latlng, tol) || !nearBbox(part, b.latlng, tol)) continue;
+        const pa = projectOnPart(part, a.latlng), pb = projectOnPart(part, b.latlng);
+        if (pa.dist > tol || pb.dist > tol) continue;
+        const seg = Math.abs(pb.chain - pa.chain);
+        if (seg < straight * 0.8 - 50 || seg > straight * 3 + 2000) continue;   // 投影到同一段但其實是平行的別條軌道或繞遠路
+        const score = pa.dist + pb.dist + Math.abs(seg - straight) * 0.02;
+        if (!best || score < best.score) best = { score, part, pa, pb };
+      }
+      if (best) break;
+    }
+    if (best) return prepPart(sliceChain(best.part, best.pa.chain, best.pb.chain));
+    const viaParts = hopGeometryViaParts(line, a, b, tol, straight);
+    return viaParts || prepPart([a.latlng.slice(), b.latlng.slice()]);
+  }
+  // 兩站落在不同線段上（資料在兩站之間被切開）：把線段當節點，端點相近就可相接，找最短的一串接起來
+  function hopGeometryViaParts(line, a, b, tol, straight, gapMax = 1500) {
+    const parts = line.rawParts || []; if (parts.length < 2) return null;
+    const near = pt => parts.map((p, i) => nearBbox(p, pt, tol) ? { i, pr: projectOnPart(p, pt) } : null).filter(x => x && x.pr.dist <= tol);
+    const A = near(a.latlng), B = near(b.latlng); if (!A.length || !B.length) return null;
+    const len = i => parts[i].cum[parts[i].cum.length - 1], endPt = (i, e) => e ? parts[i][parts[i].length - 1] : parts[i][0];
+    const key = (i, e) => i + ':' + e;
+    const dist = new Map(), prev = new Map(), done = new Set();
+    for (const s of A) { dist.set(key(s.i, 0), s.pr.chain); prev.set(key(s.i, 0), { src: s }); dist.set(key(s.i, 1), len(s.i) - s.pr.chain); prev.set(key(s.i, 1), { src: s }); }
+    const limit = straight * 3 + 3000; let bestEnd = null;
+    while (true) {
+      let u = null, du = Infinity; for (const [k, d] of dist) if (!done.has(k) && d < du) { u = k; du = d; }
+      if (u == null || du > limit) break; done.add(u);
+      const [ui, ue] = u.split(':').map(Number);
+      for (const t of B) if (t.i === ui) { const c = du + (ue ? len(ui) - t.pr.chain : t.pr.chain); if (!bestEnd || c < bestEnd.cost) bestEnd = { cost: c, node: u, tgt: t }; }
+      const relax = (k, nd, via) => { if (nd < (dist.get(k) ?? Infinity)) { dist.set(k, nd); prev.set(k, via); } };
+      relax(key(ui, 1 - ue), du + len(ui), { from: u, traverse: true });   // 走完這一段到另一端
+      const pt = endPt(ui, ue);
+      for (let j = 0; j < parts.length; j++) { if (j === ui) continue; for (const e of [0, 1]) { const g = haversine(pt, endPt(j, e)); if (g < gapMax) relax(key(j, e), du + g * 4, { from: u, gap: true }); } }
+    }
+    if (!bestEnd) return null;
+    // 回溯：從 A 的投影 → 一路到 B 的投影
+    const chain = []; let cur = bestEnd.node;
+    while (cur) { const p = prev.get(cur); chain.unshift({ node: cur, via: p }); if (!p || p.src) break; cur = p.from; }
+    const pts = [];
+    for (let k = 0; k < chain.length; k++) {
+      const [i, e] = chain[k].node.split(':').map(Number), via = chain[k].via;
+      if (via.src) { pts.push(...sliceChain(parts[i], via.src.pr.chain, e ? len(i) : 0)); }   // 從 A 投影走到這一端
+      else if (via.traverse) { const [pi, pe] = via.from.split(':').map(Number); pts.push(...sliceChain(parts[pi], pe ? len(pi) : 0, e ? len(i) : 0)); }
+      else if (via.gap) { pts.push(endPt(i, e)); }
+    }
+    const [li, le] = bestEnd.node.split(':').map(Number);
+    const lastCount = chain.length ? chain.length : 0;
+    if (chain.length === 1 && chain[0].via.src && chain[0].via.src.i === bestEnd.tgt.i) return prepPart(sliceChain(parts[li], chain[0].via.src.pr.chain, bestEnd.tgt.pr.chain));
+    pts.push(...sliceChain(parts[li], le ? len(li) : 0, bestEnd.tgt.pr.chain));
+    const out = pts.filter((p, i) => i === 0 || haversine(p, pts[i - 1]) > 0.5);
+    return out.length >= 2 ? prepPart(out) : null;
+  }
+  function buildHopGeometry(line, stations, tol = 400) {
+    line.hopGeom = {}; line.hopTol = tol;
+    for (const path of line.routes) for (let i = 0; i < path.length - 1; i++) {
+      const A = path[i], B = path[i + 1]; if (line.hopGeom[A + '>' + B]) continue;
+      const g = hopGeometry(line, stations, A, B, tol); if (!g) continue;
+      line.hopGeom[A + '>' + B] = g; line.hopGeom[B + '>' + A] = prepPart(g.slice().reverse());
+    }
+  }
+  function positionAlongHops(hops, f) {               // hops: 幾何陣列（各自有 cum）；f = 全程比例
+    const lens = hops.map(h => h.cum[h.cum.length - 1]), total = lens.reduce((x, y) => x + y, 0);
+    let target = Math.max(0, Math.min(1, f)) * total;
+    for (let i = 0; i < hops.length; i++) {
+      if (target <= lens[i] || i === hops.length - 1) return pointAtChain(hops[i], target);
+      target -= lens[i];
+    }
+    return null;
+  }
+  // 整個系統的站點網（跨路線）：給台鐵這種列車會跨線、跳站的系統找兩停靠站之間的實際路徑
+  function buildRailGraph(S) {
+    const adj = new Map(); const add = (a, b, g, line) => { if (!adj.has(a)) adj.set(a, new Map()); const cur = adj.get(a).get(b); const len = g.cum[g.cum.length - 1]; if (!cur || len < cur.len) adj.get(a).set(b, { len, g, line }); };
+    for (const line of S.lines.values()) { if (line.hidden || !line.hopGeom) continue; for (const path of line.routes) for (let i = 0; i < path.length - 1; i++) { const A = path[i], B = path[i + 1]; const g = line.hopGeom[A + '>' + B], r = line.hopGeom[B + '>' + A]; if (g) add(A, B, g, line); if (r) add(B, A, r, line); } }
+    S.railAdj = adj; S.railPathCache = new Map();
+  }
+  function railPath(S, A, B) {                        // Dijkstra（依軌道長度）→ [{from,to,g,line}] 或 null
+    if (!S.railAdj) return null; const key = A + '>' + B; if (S.railPathCache.has(key)) return S.railPathCache.get(key);
+    const dist = new Map([[A, 0]]), prev = new Map(), done = new Set(); let result = null;
+    while (true) {
+      let u = null, du = Infinity; for (const [k, d] of dist) if (!done.has(k) && d < du) { u = k; du = d; }
+      if (u == null) break; if (u === B) break; done.add(u);
+      for (const [v, e] of (S.railAdj.get(u) || new Map())) { const nd = du + e.len; if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); prev.set(v, { u, e }); } }
+    }
+    if (dist.has(B) && A !== B) { const hops = []; let cur = B; while (cur !== A) { const p = prev.get(cur); if (!p) { hops.length = 0; break; } hops.unshift({ from: p.u, to: cur, g: p.e.g, line: p.e.line }); cur = p.u; } result = hops.length ? hops : null; }
+    S.railPathCache.set(key, result); return result;
   }
   function projectOnPart(part, pt) {                 // 點投影到折線 → {dist, chain, idx}
     const cosLat = Math.cos(toRad(pt[0]));
@@ -350,6 +452,7 @@ const CORE = (() => {
   function positionBetween(line, stations, P, S, f) {
     const a = stations.get(P), b = stations.get(S);
     if (!a || !b) return null;
+    const hg = line.hopGeom && line.hopGeom[P + '>' + S]; if (hg) return positionAlongHops([hg], f);
     const pp = line.proj[P], ps = line.proj[S];
     if (pp && ps && pp.partIdx === ps.partIdx && pp.dist < 400 && ps.dist < 400 && Math.abs(ps.chain - pp.chain) > 5) {
       const part = line.parts[pp.partIdx];
@@ -665,14 +768,17 @@ const CORE = (() => {
           }
           if (!status) { status = 'at'; at = last[0]; idx = st.length - 1; }
         }
-        const line = status === 'moving' ? railLineFor(S, from, to) : railLineFor(S, at, null); if (!line) continue;
+        let hops = null, line = null;
+        if (status === 'moving') { const path = railPath(S, from, to); if (path) { hops = path.map(h => h.g); line = path[0].line; } else line = railLineFor(S, from, to); }
+        else line = railLineFor(S, at, null);
+        if (!line) continue;
         const dest = last[0], destName = (S.stations.get(dest) || {}).name || dest;
         const f = status === 'moving' ? Math.max(0.02, Math.min(0.98, (c.mins - depT) / Math.max(0.5, arrT - depT))) : 1;
         const upcoming = st.slice(idx).map(x => ({ station: x[0], eta: Math.max(0, x[1] - c.mins) }));
         const nextStop = status === 'moving' ? to : (st[idx + 1] ? st[idx + 1][0] : null);
         out.push({ id: `${S.cfg.id}:${tr.no}:${c.key}`, lineKey: line.key, sys: S.cfg.id, lineId: line.id, dest, destName, headSign: '', trainNo: tr.no, trainType: tr.type || '', dir: tr.dir,
           status, at, from, to, f, fMin: 0.02, fMax: 0.98, rt: status === 'moving' ? (arrT - depT) * 60 : 0, eta: status === 'moving' ? Math.max(0, arrT - c.mins) : 0,
-          source: 'train', srcTime: null, depMs: base + depT * 60000, arrMs: base + arrT * 60000, upcoming, pos: -(st.length - idx + (status === 'moving' ? 1 - f : 0)),
+          source: 'train', srcTime: null, depMs: base + depT * 60000, arrMs: base + arrT * 60000, upcoming, hops, pos: -(st.length - idx + (status === 'moving' ? 1 - f : 0)),
           nextStop, facing: nextStop, backOf: from, origin: first[0], originName: (S.stations.get(first[0]) || {}).name || first[0] });
       }
     }
@@ -770,7 +876,7 @@ const CORE = (() => {
 
   return { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectOnPart, pointAtChain, projectStations, positionBetween,
     buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-    normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay,
+    buildHopGeometry, positionAlongHops, buildRailGraph, railPath, normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay,
     scheduledTrains, stationDepartures, railLineFor };
 })();
 /* ===================== CORE END ===================== */
@@ -778,13 +884,14 @@ const CORE = (() => {
 /* ===================== APP（地圖、資料載入、UI） ===================== */
 const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectStations, positionBetween,
   buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures, normName } = CORE;
+  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures, normName, buildHopGeometry, positionAlongHops, buildRailGraph } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
 // 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
 // 開頁時會自動讀進來覆蓋這裡的值；這樣之後更新 index.html 也不會把設定洗掉
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
+  title: '',            // 想改網站名稱就填這裡（或 config.json 的 title），空白＝用預設的「台灣大眾運輸即時地圖」
   liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
@@ -805,9 +912,12 @@ async function loadConfig() {                       // config.json 可覆蓋 CON
   if (MOCK) return;
   try {
     const res = await fetch('./config.json', { cache: 'no-store' }); if (!res.ok) return;
-    const c = await res.json(); if (!c || typeof c !== 'object') return;
+    let c; const text = await res.text();
+    try { c = JSON.parse(text); } catch (e) { toast('config.json 不是合法的 JSON（每一行結尾要有逗號、最後一行不要），目前先用預設設定：' + e.message, 15000); return; }
+    if (!c || typeof c !== 'object') return;
     Object.assign(CONFIG, c); LIVE_PROXY = computeProxy();
     if (c.holidays) setHolidays(CONFIG.holidays);
+    if (c.title) { document.title = c.title; $('brandTitle').textContent = c.title; }
   } catch (e) { /* 沒有 config.json 就用 index.html 裡的預設 */ }
 }
 const REFRESH_MS = Math.max(8000, (Number(Q.get('refresh')) || 15) * 1000);
@@ -869,7 +979,7 @@ async function fetchLive(cfg) {
   const url = LIVE_PROXY ? `${LIVE_PROXY}${LIVE_PROXY.includes('?') ? '&' : '?'}src=${encodeURIComponent(cfg.src)}` : cfg.feed;
   let res;
   try { res = await fetch(url, { cache: 'no-store' }); }
-  catch (e) { throw new Error(LIVE_PROXY ? `連不到代理 ${LIVE_PROXY}` : '瀏覽器直接讀取公開資料被擋（CORS）。請照 README 建立免費的 Cloudflare Worker 代理，填入 CONFIG.liveProxy'); }
+  catch (e) { throw new Error(LIVE_PROXY ? `連不到代理 ${LIVE_PROXY}` : '瀏覽器直接讀取公開資料被擋（CORS）。請照 README 建立免費的 Cloudflare Worker 代理，把網址填進 config.json 的 liveProxy'); }
   if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`HTTP ${res.status}${t ? ' ' + t.slice(0, 80) : ''}`); }
   const text = (await bufToText(await res.arrayBuffer())).replace(/^\uFEFF/, '');
   return pickArray(JSON.parse(text));
@@ -999,7 +1109,13 @@ function buildSystem(S, lines, stations, routes, sol, shapes, s2s) {
       line.s2s[t.FromStationID + '>' + t.ToStationID] = { run, stop: num(t.StopTime) || 0 };
     }
   }
-  for (const line of S.lines.values()) { line.parts = stitchParts(line.parts).map(prepPart); projectStations(line, S.stations); }
+  const tol = S.cfg.kind === 'train' ? 1500 : 400;                              // 車站點到軌道線的容許距離
+  for (const line of S.lines.values()) {
+    line.rawParts = line.parts.filter(p => p && p.length >= 2).map(p => prepPart(p.slice()));   // 畫圖用原始線段，不縫合，避免縫錯
+    line.parts = stitchParts(stitchParts(line.parts, 30), 200).map(prepPart);                  // 縫合後的長鏈只當定位備援
+    projectStations(line, S.stations); buildHopGeometry(line, S.stations, tol);
+  }
+  if (S.cfg.kind === 'train') buildRailGraph(S);
 }
 
 // 時刻表若附 TrainNo，可用同一車次在相鄰兩站的時刻差，推得站間行駛秒數（中位數）
@@ -1034,9 +1150,9 @@ function dedupeSharedLines() {
       for (const id of bl.stationSet) if (al.stationSet.has(id)) { inter++; if ((A.stations.get(id) || {}).name === (B.stations.get(id) || {}).name) sameName++; }
       if (inter >= 0.5 * Math.min(al.stationSet.size, bl.stationSet.size) && sameName >= 0.5 * inter) {
         bl.hidden = true; bl.mergedInto = al.key; al.alsoIn.push(B.cfg.id);
-        if (!al.parts.length && bl.parts.length) al.parts = bl.parts;
+        if (!al.parts.length && bl.parts.length) { al.parts = bl.parts; al.rawParts = bl.rawParts; }
         if (!al.routes.length && bl.routes.length) { al.routes = bl.routes; buildLineGraph(al); }
-        projectStations(al, A.stations);
+        projectStations(al, A.stations); buildHopGeometry(al, A.stations, al.hopTol || 400);
       }
     }
   }
@@ -1049,7 +1165,7 @@ function routesToParts(line, stations) {
 function drawSystem(S) {
   for (const line of S.lines.values()) {
     if (line.hidden) continue;
-    const parts = line.parts.length ? line.parts : routesToParts(line, S.stations);
+    const parts = (line.rawParts && line.rawParts.length) ? line.rawParts : line.parts.length ? line.parts : routesToParts(line, S.stations);
     line.polylines = parts.map(p => L.polyline(p, { pane: 'lines', color: line.color, weight: 5, opacity: .9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(S.layers.lines));
   }
   for (const st of S.stations.values()) {
@@ -1153,6 +1269,7 @@ function countTrains(lineKey) { let n = 0; for (const t of state.trains) if (t.l
 /* ---------- 列車 marker ---------- */
 function trainPosition(t) {
   const line = lineByKey(t.lineKey), S = state.systems[t.sys]; if (!line || !S) return null;
+  if (t.status === 'moving' && t.hops) return positionAlongHops(t.hops, t.f);
   if (t.status === 'moving') return positionBetween(line, S.stations, t.from, t.to, t.f);
   const st = S.stations.get(t.at); if (!st) return null;
   const nb = t.facing && S.stations.get(t.facing), pb = t.backOf && S.stations.get(t.backOf);
@@ -1602,6 +1719,7 @@ map.on('click', () => { if (state.selected) closeDetail(); });
 /* ---------- 啟動 ---------- */
 (async function init() {
   await loadConfig();
+  if (CONFIG.title) { document.title = CONFIG.title; $('brandTitle').textContent = CONFIG.title; }
   if (MOCK) { $('footNote').textContent = '目前為示範資料模式（?mock=1）：路網與列車皆為模擬，不代表真實營運。'; initBusSearch(); }
   else {
     fetch(`${DATA_BASE}/index.json`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.generatedAt) { state.dataInfo = d; $('footNote').textContent += ` 路網資料產生於 ${new Date(d.generatedAt).toLocaleDateString('zh-TW')}。`; } initBusSearch(); }).catch(() => initBusSearch());
