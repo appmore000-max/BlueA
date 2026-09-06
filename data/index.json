@@ -1,6 +1,6 @@
 {
- "generatedAt": "2026-09-05T18:37:30.178Z",
- "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/",
+ "generatedAt": "2026-09-06T04:00:33.680Z",
+ "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
    "Line": 5,
@@ -10,7 +10,8 @@
    "Shape": 5,
    "S2STravelTime": 11,
    "FirstLastTimetable": 217,
-   "Frequency": 22
+   "Frequency": 22,
+   "StationExit": 437
   },
   "NTMC": {
    "Line": 1,
@@ -21,7 +22,8 @@
    "S2STravelTime": 1,
    "StationTimeTable": 50,
    "FirstLastTimetable": 26,
-   "Frequency": 2
+   "Frequency": 2,
+   "StationExit": 24
   },
   "NTDLRT": {
    "Line": 1,
@@ -32,7 +34,8 @@
    "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
    "StationTimeTable": 68,
    "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
-   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, "
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "StationExit": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, "
   },
   "NTALRT": {
    "Line": 1,
@@ -43,7 +46,8 @@
    "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
    "StationTimeTable": 32,
    "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
-   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, "
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
+   "StationExit": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, "
   },
   "TYMC": {
    "Line": 1,
@@ -54,7 +58,8 @@
    "S2STravelTime": 2,
    "StationTimeTable": 128,
    "FirstLastTimetable": 160,
-   "Frequency": 1
+   "Frequency": 1,
+   "StationExit": 39
   },
   "TMRT": {
    "Line": 1,
@@ -65,7 +70,8 @@
    "S2STravelTime": 2,
    "StationTimeTable": "error: HTTP 400 {\"Message\":\"RailSystem: 'TMRT' is not accepted but TRTC, KRTC, TYMC, KL",
    "FirstLastTimetable": 34,
-   "Frequency": 2
+   "Frequency": 2,
+   "StationExit": 29
   },
   "KRTC": {
    "Line": 2,
@@ -76,7 +82,8 @@
    "S2STravelTime": 4,
    "StationTimeTable": 296,
    "FirstLastTimetable": 304,
-   "Frequency": 8
+   "Frequency": 8,
+   "StationExit": 155
   },
   "KLRT": {
    "Line": 1,
@@ -87,7 +94,35 @@
    "S2STravelTime": 2,
    "StationTimeTable": 152,
    "FirstLastTimetable": 152,
-   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'KLRT' is not accepted but TRTC, KRTC, TYMC, TM"
+   "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'KLRT' is not accepted but TRTC, KRTC, TYMC, TM",
+   "StationExit": "error: HTTP 400 {\"Message\":\"RailSystem: 'KLRT' is not accepted but TRTC, KRTC, TYMC, TR"
+  },
+  "TRA": {
+   "Station": 245,
+   "Line": 12,
+   "StationOfLine": 12,
+   "Shape": 20,
+   "TrainType": 55,
+   "Trains": 954
+  },
+  "THSR": {
+   "Station": 12,
+   "Shape": 1,
+   "Trains": 214
+  }
+ },
+ "bus": {
+  "TPE": {
+   "routes": 792,
+   "stops": 28862,
+   "shapes": 1010,
+   "files": 416
+  },
+  "NTPC": {
+   "routes": 1070,
+   "stops": 33294,
+   "shapes": 1316,
+   "files": 635
   }
  }
 }
