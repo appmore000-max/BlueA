@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-06T04:00:33.680Z",
+ "generatedAt": "2026-09-06T09:48:18.194Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
@@ -123,6 +123,13 @@
    "stops": 33294,
    "shapes": 1316,
    "files": 635
+  },
+  "Taichung": {
+   "source": "tdx",
+   "routes": 755,
+   "stops": 755,
+   "shapes": 761,
+   "files": 389
   }
  }
 }
