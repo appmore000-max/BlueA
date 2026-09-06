@@ -30,7 +30,13 @@
     --font:"Noto Sans TC","PingFang TC","Microsoft JhengHei","Heiti TC",system-ui,sans-serif;
     --safe-b:env(safe-area-inset-bottom,0px);
   }
-  body.dark{--ink:#e6ebf1;--muted:#98a3b1;--rule:#2b3542;--panel:rgba(24,29,36,.92);--panel-solid:#181d24;--shadow:0 6px 24px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);background:#0e1115}
+  body.dark{--ink:#e6ebf1;--muted:#98a3b1;--rule:#2b3542;--panel:rgba(24,29,36,.92);--panel-solid:#181d24;--shadow:0 6px 24px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);background:#0e1115;color-scheme:dark}
+  body.dark .chip{background:#252c36}
+  body.dark .chip:hover{background:#2f3742}
+  body.dark .d-state{background:#1f252d}
+  body.dark .linkish{color:#7fb4ec}
+  body.dark .sys-name:hover{background:#252c36}
+  body.dark select,body.dark input[type=text],body.dark input[type=search]{background:#11161c;color:var(--ink);border-color:#2b3542}
   body.dark #map{background:#0e1115}
   body.dark .leaflet-tile-pane .basemap{filter:invert(1) hue-rotate(180deg) grayscale(1) brightness(.72) contrast(.95);opacity:.95}
   body.dark .btn:hover{background:#232a33}
@@ -87,6 +93,15 @@
 
   .sys-row{padding:8px 0;border-bottom:1px solid var(--rule)}
   .grp{font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;padding:12px 0 2px}
+  .bus-search-row{display:flex;gap:6px;margin:6px 0}
+  .bus-search-row select,.bus-search-row input{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--rule);border-radius:8px;background:#fff;color:var(--ink);min-width:0}
+  .bus-search-row select{flex:0 0 auto;max-width:44%}
+  .bus-search-row input{flex:1}
+  .bus-results{display:flex;flex-direction:column;gap:2px;max-height:220px;overflow:auto}
+  .bus-results button{border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;gap:8px}
+  .bus-results button:hover{background:#f0f2f5}
+  .bus-results button small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body.dark .bus-results button:hover{background:#252c36}
   .sw.bus{border-radius:50%;background:#e67e22}
   .bus-tip{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:3px 7px;font:600 12px/1.3 var(--font);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.15)}
   .bus-tip::before{display:none}
@@ -198,7 +213,13 @@
     <li><i class="sw est"></i>時刻表／班距推估</li>
     <li><i class="sw bus"></i>公車（GPS）</li>
   </ul>
-  <div class="panel-body" id="systemsList"></div>
+  <div class="panel-body"><div id="systemsList"></div>
+    <div class="bus-search" id="busSearch" hidden>
+      <div class="grp">公車路線查詢</div>
+      <div class="bus-search-row"><select id="busCity" aria-label="縣市"></select><input id="busQuery" type="search" placeholder="路線號碼，例如 300" autocomplete="off" aria-label="路線號碼"></div>
+      <div id="busResults" class="bus-results"></div>
+    </div>
+  </div>
   <p class="note" id="footNote">臺北捷運：以官方公開的「列車進站站名」資料（每 30 秒）加站間行駛時間推算；其他系統沒有免費即時資料，依時刻表或班距推估。路網資料來自交通部 TDX。</p>
 </aside>
 
@@ -757,14 +778,14 @@ const CORE = (() => {
 /* ===================== APP（地圖、資料載入、UI） ===================== */
 const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectStations, positionBetween,
   buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures } = CORE;
+  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures, normName } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
-// 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"":"https://xxx.workers.dev"}），
+// 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
 // 開頁時會自動讀進來覆蓋這裡的值；這樣之後更新 index.html 也不會把設定洗掉
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
-  liveProxy: 'https://late-hill-b6d1.qqaawwss6574.workers.dev/',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+  liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
   // 這份清單只在抓不到時使用，也可以在這裡加自己想要的日期
@@ -824,7 +845,7 @@ const RAIL_PALETTE = ['#3b6fb6', '#2e8b57', '#c8511b', '#8e44ad', '#16a085', '#d
 const mock = MOCK ? makeMock(Number(Q.get('speed')) || 1) : null;
 
 const state = { systems: {}, trains: [], prevTrains: [], markers: new Map(), uidSeq: 1, selected: null, follow: false, nextRefreshAt: 0, lastLiveAt: null, refreshing: false, liveOk: false, dataInfo: null,
-  bus: { on: new Set(), cities: {}, lastAt: 0, markers: new Map(), selected: null } };
+  bus: { on: new Set(), cities: {}, lastAt: 0, markers: new Map(), selected: null, routeSel: null, staticCities: {} } };
 
 // 靜態資料：data/<系統>/<種類>.json（404 → null）
 async function loadStatic(sys, kind) {
@@ -1273,7 +1294,9 @@ function renderBuses() {
       total++; B.shown++; keep.add(b.key);
       let m = state.bus.markers.get(b.key);
       const sel = state.bus.selected && state.bus.selected.key === b.key;
-      const style = { radius: busRadius() + (sel ? 3 : 0), color: sel ? (isDark() ? '#fff' : '#1c2430') : '#fff', weight: sel ? 2.5 : 1.2, fillColor: B.cfg.color, fillOpacity: .95 };
+      const rs = state.bus.routeSel && state.bus.routeSel.city === id ? state.bus.routeSel.id : null;
+      const onRoute = rs && B.routes && (B.routes.get(b.route) || {}).id === rs;
+      const style = { radius: busRadius() + (sel || onRoute ? 3 : 0), color: sel ? (isDark() ? '#fff' : '#1c2430') : '#fff', weight: sel ? 2.5 : 1.2, fillColor: B.cfg.color, fillOpacity: rs && !onRoute ? .25 : .95 };
       if (!m) {
         m = L.circleMarker([b.lat, b.lon], { pane: 'buses', bubblingMouseEvents: false, ...style });
         m.bindTooltip(() => busRouteName(B, m.bus), { direction: 'top', offset: [0, -6], className: 'bus-tip', sticky: false });
@@ -1315,6 +1338,60 @@ function showBusDetail(city, b, drawRoute) {
       for (const st of stops) L.circleMarker([st.lat, st.lon], { pane: 'stations', radius: 3, color: B.cfg.color, weight: 1.5, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(busRouteLayer);
     }
   }).catch(() => { const el = $('busStops'); if (el) el.innerHTML = '<h3>沿途站牌</h3><p class="empty">沒有這條路線的站牌資料（Actions 尚未產生 data/bus/）。</p>'; });
+}
+/* ---------- 公車路線查詢：臺北、新北用公開檔；其他縣市用 Actions 從 TDX 抓的靜態路網（沒有即時車輛） ---------- */
+const TDX_CITY_NAME = { Taipei: '臺北市', NewTaipei: '新北市', Taoyuan: '桃園市', Taichung: '臺中市', Tainan: '臺南市', Kaohsiung: '高雄市', Keelung: '基隆市', Hsinchu: '新竹市', HsinchuCounty: '新竹縣', MiaoliCounty: '苗栗縣', ChanghuaCounty: '彰化縣', NantouCounty: '南投縣', YunlinCounty: '雲林縣', ChiayiCounty: '嘉義縣', Chiayi: '嘉義市', PingtungCounty: '屏東縣', YilanCounty: '宜蘭縣', HualienCounty: '花蓮縣', TaitungCounty: '臺東縣', KinmenCounty: '金門縣', PenghuCounty: '澎湖縣', LienchiangCounty: '連江縣', InterCity: '公路客運' };
+function busCityOptions() {
+  const opts = ACTIVE_BUS.map(c => ({ id: c.id, name: c.name.replace(/公車$/, '') + '（有即時車輛）' }));
+  const extra = state.dataInfo && state.dataInfo.bus ? Object.keys(state.dataInfo.bus).filter(k => !ACTIVE_BUS.some(c => c.id === k) && typeof state.dataInfo.bus[k] === 'object') : [];
+  for (const k of extra) opts.push({ id: k, name: (TDX_CITY_NAME[k] || k) + '（僅路線）' });
+  return opts;
+}
+function initBusSearch() {
+  const opts = busCityOptions(); if (!opts.length) return;
+  const sel = $('busCity'); sel.innerHTML = opts.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
+  const pref = loadPref('busCity'); if (pref && opts.some(o => o.id === pref)) sel.value = pref;
+  $('busSearch').hidden = false;
+}
+async function busRoutesFor(city) {
+  const B = state.bus.cities[city]; if (B) { if (!B.routes) { B.routes = new Map(); for (const r of pickArray(await loadStatic('bus/' + city, 'routes').catch(() => []) || [])) { B.routes.set(r.sub, r); if (!B.routes.has(r.id)) B.routes.set(r.id, r); } } return B.routes; }
+  if (!state.bus.staticCities[city]) { const m = new Map(); for (const r of pickArray(await loadStatic('bus/' + city, 'routes').catch(() => []) || [])) { m.set(r.sub, r); if (!m.has(r.id)) m.set(r.id, r); } state.bus.staticCities[city] = m; }
+  return state.bus.staticCities[city];
+}
+let busQueryTimer = null;
+$('busQuery').addEventListener('input', () => { clearTimeout(busQueryTimer); busQueryTimer = setTimeout(runBusQuery, 200); });
+$('busCity').addEventListener('change', () => { savePref('busCity', $('busCity').value); runBusQuery(); });
+async function runBusQuery() {
+  const city = $('busCity').value, q = normName($('busQuery').value); const box = $('busResults');
+  if (!q) { box.innerHTML = ''; return; }
+  const routes = await busRoutesFor(city); const seen = new Set(), hits = [];
+  for (const r of routes.values()) { if (seen.has(r.id)) continue; if (normName(r.name).includes(q)) { seen.add(r.id); hits.push(r); } }
+  hits.sort((a, b) => (normName(a.name) === q ? -1 : 1) - (normName(b.name) === q ? -1 : 1) || a.name.localeCompare(b.name, 'zh-Hant'));
+  box.innerHTML = hits.length ? hits.slice(0, 20).map(r => `<button type="button" data-route="${esc(r.id)}" data-city="${esc(city)}"><b>${esc(r.name)}</b><small>${esc([r.from, r.to].filter(Boolean).join(' – '))}</small></button>`).join('') : '<p class="empty">沒有符合的路線</p>';
+}
+$('busResults').addEventListener('click', e => { const b = e.target.closest('[data-route]'); if (b) showBusRoute(b.dataset.city, b.dataset.route, 0); });
+async function showBusRoute(city, rid, gb) {
+  const routes = await busRoutesFor(city); const r = routes.get(rid) || [...routes.values()].find(x => x.id === rid); if (!r) return;
+  const B = state.bus.cities[city], color = B ? B.cfg.color : '#e67e22', cityName = B ? B.cfg.name : (TDX_CITY_NAME[city] || city) + '公車';
+  closeDetail(); state.bus.routeSel = { city, id: r.id };
+  const rf = await loadStatic('bus/' + city, 'route/' + String(r.id).replace(/[^\w.-]/g, '_')).catch(() => null);
+  if (!state.bus.routeSel || state.bus.routeSel.id !== r.id) return;
+  const stops = rf && rf.stops ? (rf.stops[gb] || rf.stops[String(gb)] || []) : [];
+  const other = rf && rf.stops ? (rf.stops[1 - gb] || rf.stops[String(1 - gb)] || []) : [];
+  const body = `<span class="line-tag" style="--c:${esc(color)}">${esc(cityName)}</span>
+    <div class="d-title">${esc(r.name)}${r.subName && r.subName !== r.name ? ` <small style="font-size:14px;color:var(--muted)">${esc(r.subName)}</small>` : ''}</div>
+    <div class="d-sub">${esc([r.from, r.to].filter(Boolean).join(' ⇄ '))}${B ? '' : ' · 此縣市沒有免費的即時車輛資料，只顯示路線'}</div>
+    <div class="btn-row"><button type="button" class="btn ${gb === 0 ? 'on' : ''}" id="busDir0">去程${r.to ? ' 往 ' + esc(r.to) : ''}</button><button type="button" class="btn ${gb === 1 ? 'on' : ''}" id="busDir1" ${other.length ? '' : 'disabled'}>返程${r.from ? ' 往 ' + esc(r.from) : ''}</button></div>
+    <div class="d-section"><h3>站牌（${stops.length}）</h3>${stops.length ? `<ul class="stops">${stops.map(s => `<li><span class="n"><i style="--c:${esc(color)}"></i><span>${esc(s.name)}</span></span></li>`).join('')}</ul>` : '<p class="empty">沒有站牌資料（Actions 尚未產生這個縣市的 data/bus/）。</p>'}</div>`;
+  openDetail('公車路線', body);
+  $('busDir0').onclick = () => showBusRoute(city, rid, 0); $('busDir1').onclick = () => showBusRoute(city, rid, 1);
+  busRouteLayer.clearLayers();
+  const wkt = rf && rf.shape && (rf.shape[gb] || rf.shape[String(gb)] || rf.shape[0] || rf.shape['0']);
+  const pts = [];
+  for (const part of (wkt ? parseWKT(wkt) : [])) { L.polyline(part, { pane: 'lines', color, weight: 4, opacity: .8, interactive: false }).addTo(busRouteLayer); pts.push(...part); }
+  for (const st of stops) { if (Number.isFinite(st.lat) && Number.isFinite(st.lon)) { L.circleMarker([st.lat, st.lon], { pane: 'stations', radius: 3.5, color, weight: 1.5, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(st.name, { direction: 'top', offset: [0, -4] }).addTo(busRouteLayer); pts.push([st.lat, st.lon]); } }
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: isMobile() ? [20, 20] : [80, 80], maxZoom: 15 });
+  if (B && state.bus.on.has(city)) renderBuses();
 }
 /* ---------- 側欄：系統清單 ---------- */
 function liveMeta(S) {
@@ -1374,7 +1451,8 @@ $('systemsList').addEventListener('click', e => {
 function openDetail(head, body) { $('detailHead').textContent = head; $('detailBody').innerHTML = body; $('detailPanel').hidden = false; }
 function closeDetail() {
   $('detailPanel').hidden = true; state.follow = false; exitLayer.clearLayers(); busRouteLayer.clearLayers();
-  if (state.bus.selected) { state.bus.selected = null; renderBuses(); }
+  const hadRoute = !!state.bus.routeSel; state.bus.routeSel = null;
+  if (state.bus.selected || hadRoute) { state.bus.selected = null; renderBuses(); }
   if (state.selected && state.selected.type === 'train') { const m = state.markers.get(state.selected.uid); const el = m && m.getElement(); if (el) el.classList.remove('sel'); }
   state.selected = null;
 }
@@ -1524,9 +1602,9 @@ map.on('click', () => { if (state.selected) closeDetail(); });
 /* ---------- 啟動 ---------- */
 (async function init() {
   await loadConfig();
-  if (MOCK) $('footNote').textContent = '目前為示範資料模式（?mock=1）：路網與列車皆為模擬，不代表真實營運。';
+  if (MOCK) { $('footNote').textContent = '目前為示範資料模式（?mock=1）：路網與列車皆為模擬，不代表真實營運。'; initBusSearch(); }
   else {
-    fetch(`${DATA_BASE}/index.json`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.generatedAt) { state.dataInfo = d; $('footNote').textContent += ` 路網資料產生於 ${new Date(d.generatedAt).toLocaleDateString('zh-TW')}。`; } }).catch(() => {});
+    fetch(`${DATA_BASE}/index.json`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.generatedAt) { state.dataInfo = d; $('footNote').textContent += ` 路網資料產生於 ${new Date(d.generatedAt).toLocaleDateString('zh-TW')}。`; } initBusSearch(); }).catch(() => initBusSearch());
     await fetch(`${DATA_BASE}/holidays.json`).then(r => r.ok ? r.json() : null).then(cal => { if (cal && cal.holidays) setCalendar({ holidays: [...cal.holidays, ...CONFIG.holidays], workdays: cal.workdays || [] }); }).catch(() => {});
   }
   await Promise.all(ACTIVE_SYSTEMS.map(loadSystem));

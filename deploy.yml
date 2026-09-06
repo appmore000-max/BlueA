@@ -32,6 +32,8 @@ jobs:
         env:
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          # 其他縣市的公車路網（只有路線與站牌，沒有免費即時車輛）。想加就用逗號隔開，例如 Taichung,Taoyuan,Kaohsiung；留空則不抓
+          BUS_TDX_CITIES: Taichung
       - name: 提交 data/
         run: |
           git config user.name "github-actions[bot]"
