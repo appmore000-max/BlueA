@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-06T11:33:19.744Z",
+ "generatedAt": "2026-09-06T20:15:26.389Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
@@ -120,7 +120,7 @@
   },
   "NTPC": {
    "routes": 1070,
-   "stops": 33294,
+   "stops": 33275,
    "shapes": 1316,
    "files": 635
   },
