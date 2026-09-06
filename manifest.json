@@ -1,7 +1,7 @@
 {
-  "name": "台灣捷運即時位置圖",
+  "name": "台灣大眾運輸即時地圖",
   "short_name": "捷運即時",
-  "description": "全台捷運與輕軌的即時／推估列車位置",
+  "description": "全台大眾運輸即時地圖的即時／推估列車/公車位置",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
