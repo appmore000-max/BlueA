@@ -169,6 +169,11 @@
   .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .btn-row .btn{padding:6px 12px;font-size:13px}
   .btn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .btn.track{background:#1a73e8;color:#fff;border-color:#1a73e8}
+  .cars{display:flex;gap:4px;margin:8px 0 4px}
+  .cars i{flex:1;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;background:var(--c)}
+  .cars-legend{display:flex;gap:10px;font-size:11px;color:var(--muted)}
+  .cars-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--c);margin-right:3px;vertical-align:middle}
   .leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.7)}
   .leaflet-bottom.leaflet-right .leaflet-control-zoom{margin-bottom:calc(14px + var(--safe-b))}
 
@@ -876,7 +881,7 @@ const CORE = (() => {
 
   return { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectOnPart, pointAtChain, projectStations, positionBetween,
     buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-    buildHopGeometry, positionAlongHops, buildRailGraph, railPath, normName, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay,
+    buildHopGeometry, positionAlongHops, buildRailGraph, railPath, normName, nearBbox, projectOnPart, buildNameIndex, resolvePlatformRecord, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, serviceDay,
     scheduledTrains, stationDepartures, railLineFor };
 })();
 /* ===================== CORE END ===================== */
@@ -884,7 +889,7 @@ const CORE = (() => {
 /* ===================== APP（地圖、資料載入、UI） ===================== */
 const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyline, stitchParts, prepPart, projectStations, positionBetween,
   buildLineGraph, hopMaps, runTime, etaLookupFromTimetable, inferTrainsForLine, matchTrains, makeMock,
-  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures, normName, buildHopGeometry, positionAlongHops, buildRailGraph } = CORE;
+  buildNameIndex, createPlatformTracker, parseTime, platformUpdate, synthTimetable, setHolidays, setCalendar, scheduledTrains, stationDepartures, normName, buildHopGeometry, positionAlongHops, buildRailGraph, nearBbox, projectOnPart } = CORE;
 
 /* ===== 設定（只需要改這裡） ===== */
 // 建議把自己的設定寫在 repo 根目錄的 config.json（例如 {"liveProxy":"https://xxx.workers.dev"}），
@@ -1015,7 +1020,7 @@ function toast(msg, ms = 4000) { const el = $('toast'); el.textContent = msg; el
 async function loadSystem(cfg) {
   const S = state.systems[cfg.id] = {
     cfg, lines: new Map(), stations: new Map(), status: 'loading', err: null, timetable: null, ttSource: null, simNote: '', simDay: null, mode: 'none', trains: [], visible: true,
-    live: { feed: [], feedTime: null, srcTime: null, feedErr: null }, tracker: createPlatformTracker(), nameIdx: null,
+    live: { feed: [], feedTime: null, srcTime: null, feedErr: null }, tracker: createPlatformTracker(), nameIdx: null, crowd: { enabled: null, list: null, at: 0, err: null, dirVotes: {}, lastByUid: new Map() },
     layers: { lines: L.layerGroup().addTo(map), stations: L.layerGroup().addTo(map), trains: L.layerGroup().addTo(map) }
   };
   renderSystems();
@@ -1069,8 +1074,10 @@ async function loadRailSystem(S, get) {
   let lines = pr.lines ? pickArray(pr.lines) : [], sol = pr.sol ? pickArray(pr.sol) : [];
   if (!lines.length) {
     const ids = pickArray(stations).map(x => x.StationID).filter(Boolean).sort();
-    lines = [{ LineID: cfg.id, LineName: { Zh_tw: cfg.name }, LineColor: cfg.color }];
-    sol = [{ LineID: cfg.id, Stations: ids.map((id, i) => ({ Sequence: i + 1, StationID: id })) }];
+    const shapeLine = (pickArray(shapes || []).find(x => x.LineID) || {}).LineID;   // 高鐵的線型用自己的代碼（HSRL），合成的路線要用同一個代碼才接得上
+    const lid = shapeLine || cfg.id;
+    lines = [{ LineID: lid, LineName: { Zh_tw: cfg.name }, LineColor: cfg.color }];
+    sol = [{ LineID: lid, Stations: ids.map((id, i) => ({ Sequence: i + 1, StationID: id })) }];
   }
   lines = lines.map((ln, i) => ({ ...ln, LineColor: ln.LineColor || RAIL_PALETTE[i % RAIL_PALETTE.length] }));
   buildSystem(S, lines, stations, [], sol, shapes || [], []);
@@ -1125,11 +1132,23 @@ function buildSystem(S, lines, stations, routes, sol, shapes, s2s) {
     for (const id of line.stationSet) S.stations.get(id).lines.add(line.key);
     buildLineGraph(line);
   }
+  const orphanParts = [];
   for (const sh of pickArray(shapes)) {
-    const line = S.lines.get(sh.LineID) || S.lines.get(sh.LineNo) || S.lines.get(guessLine(sh.RouteID)); if (!line) continue;
+    const line = S.lines.get(sh.LineID) || S.lines.get(sh.LineNo) || S.lines.get(guessLine(sh.RouteID));
     let parts = parseWKT(sh.Geometry);
     if (!parts.length && sh.EncodedPolyline) { try { parts = [decodePolyline(sh.EncodedPolyline)]; } catch (e) { parts = []; } }
-    line.parts.push(...parts);
+    if (line) line.parts.push(...parts); else orphanParts.push(...parts);
+  }
+  // 線型代碼對不上任何路線的（台鐵的山線 WL-M、台東線 TT 這類）：看它經過哪些路線的車站，經過兩站以上就掛給那條線
+  if (orphanParts.length) {
+    const tolM = S.cfg.kind === 'train' ? 600 : 300;
+    for (const part of orphanParts.map(p => prepPart(p.slice()))) {
+      for (const line of S.lines.values()) {
+        let n = 0;
+        for (const id of line.stationSet) { const st = S.stations.get(id); if (st && nearBbox(part, st.latlng, tolM) && projectOnPart(part, st.latlng).dist <= tolM && ++n >= 2) break; }
+        if (n >= 2) line.parts.push(part.slice());
+      }
+    }
   }
   for (const rec of pickArray(s2s)) {
     const line = S.lines.get(rec.LineID) || S.lines.get(guessLine(rec.RouteID)); if (!line) continue;
@@ -1242,9 +1261,12 @@ async function refreshLive() {
   const tasks = [];
   for (const S of Object.values(state.systems)) {
     if (S.status !== 'ok') continue;
-    if (S.mode === 'platform') tasks.push(fetchLive(S.cfg)
-      .then(recs => { S.live.feed = recs; S.live.feedTime = Date.now(); S.live.feedErr = null; S.live.srcTime = maxTime(recs); })
-      .catch(e => { S.live.feedErr = e.message; }));
+    if (S.mode === 'platform') {
+      tasks.push(fetchLive(S.cfg)
+        .then(recs => { S.live.feed = recs; S.live.feedTime = Date.now(); S.live.feedErr = null; S.live.srcTime = maxTime(recs); })
+        .catch(e => { S.live.feedErr = e.message; }));
+      if (S.cfg.id === 'TRTC' && Date.now() - S.crowd.at > 28000) tasks.push(fetchCrowding(S));
+    }
     else if (S.ttSource === 'sim' && S.simDay !== new Date().toDateString()) rebuildSim(S);   // 過了午夜重新合成今天的班表
     if (S.cfg.statusSrc && LIVE_PROXY && (!S.statusAt || Date.now() - S.statusAt > 5 * 60 * 1000)) tasks.push(fetchStatus(S));
   }
@@ -1253,6 +1275,53 @@ async function refreshLive() {
   state.liveOk = Object.values(state.systems).some(S => S.status === 'ok' && ((S.mode === 'platform' && S.live.feedTime && !S.live.feedErr) || S.timetable || S.mode === 'train'));
   computeAllTrains(); renderTrains(); renderBuses(); renderSystems();
   state.lastLiveAt = Date.now(); state.nextRefreshAt = Date.now() + REFRESH_MS; state.refreshing = false; setStatus();
+}
+// 臺北捷運車廂擁擠度（會員 API，經 Worker；Worker 沒設定帳密就回 404，之後不再問）
+const CROWD_LEVEL = { 1: { t: '舒適', c: '#2e9e5b' }, 2: { t: '普通', c: '#d4a017' }, 3: { t: '略多', c: '#e8792b' }, 4: { t: '擁擠', c: '#d0021b' } };
+async function fetchCrowding(S) {
+  if (S.crowd.enabled === false || !LIVE_PROXY) return;
+  S.crowd.at = Date.now();
+  try {
+    const res = await fetch(`${LIVE_PROXY}${LIVE_PROXY.includes('?') ? '&' : '?'}src=trtc_carweight`, { cache: 'no-store' });
+    if (res.status === 404) { S.crowd.enabled = false; return; }
+    if (!res.ok) { S.crowd.err = `HTTP ${res.status}`; return; }
+    const d = await res.json(); S.crowd.enabled = true; S.crowd.err = d.errors && d.errors.length ? d.errors.join('；') : null;
+    S.crowd.list = d.trains || []; S.crowd.updated = d.updated;
+  } catch (e) { S.crowd.err = e.message; }
+}
+// 把擁擠度接到月台上的列車：先用車站對，同站有兩列（兩個方向）時用「方向碼 ↔ 行進方向」的對應（從不衝突的資料學來）
+function attachCrowding(S, trains) {
+  const C = S.crowd; if (!C.list || !C.list.length) return;
+  const now = Date.now(), byStation = new Map();
+  for (const r of C.list) {
+    let sid = null;
+    if (S.stations.has(r.station)) sid = r.station;
+    else { const hit = (S.nameIdx && S.nameIdx.get(normName(r.station))) || []; if (hit.length) sid = hit[0].id; }
+    if (!sid) continue; if (!byStation.has(sid)) byStation.set(sid, []); byStation.get(sid).push(r);
+  }
+  const sign = t => { const line = lineByKey(t.lineKey); if (!line || !t.dest) return 0; const d = hopMaps(line, t.dest).dist; return (d.get(t.at) || 0) > 0 ? 1 : 0; };   // 只需要能區分兩個方向
+  const hop = (line, dest, at) => hopMaps(line, dest).dist.get(at) || 0;
+  for (const [sid, recs] of byStation) {
+    const here = trains.filter(t => t.status === 'at' && t.at === sid && t.sys === S.cfg.id);
+    if (!here.length) continue;
+    if (here.length === 1 && recs.length === 1) { assign(here[0], recs[0]); const k = keyOf(here[0], recs[0]); C.dirVotes[k] = (C.dirVotes[k] || 0) + 1; continue; }
+    for (const r of recs) {       // 多列：用學到的對應挑方向
+      const cand = here.filter(t => !t.cars && C.dirVotes[keyOf(t, r)] > 0);
+      if (cand.length === 1) assign(cand[0], r);
+    }
+  }
+  function keyOf(t, r) { const line = lineByKey(t.lineKey); const twoEnds = line ? line.routes[0] : null; const towardEnd = twoEnds && t.dest ? (twoEnds.indexOf(t.dest) > twoEnds.indexOf(t.at) ? 'A' : 'B') : '?'; return `${t.lineId}|${r.dir}|${towardEnd}`; }
+  function assign(t, r) { t.cars = r.cars; t.carsTime = parseTime(r.time) || now; t.carsStation = sid2name(r.station); const k = t.id || t.uid; if (k) C.lastByUid.set(k, { cars: r.cars, time: t.carsTime, station: t.carsStation, at: now }); }
+  function sid2name(x) { const st = S.stations.get(x); return st ? st.name : x; }
+  // 已離站的列車沿用上一站的擁擠度（最多 6 分鐘）
+  for (const t of trains) { const k = t.id || t.uid; if (!t.cars && k && C.lastByUid.has(k)) { const m = C.lastByUid.get(k); if (now - m.at < 6 * 60 * 1000) { t.cars = m.cars; t.carsTime = m.time; t.carsStation = m.station; t.carsStale = true; } else C.lastByUid.delete(k); } }
+}
+function carsHtml(t) {
+  if (!t.cars) return '';
+  const cells = t.cars.map((lv, i) => `<i style="--c:${(CROWD_LEVEL[lv] || { c: '#999' }).c}" title="第 ${i + 1} 節：${(CROWD_LEVEL[lv] || { t: '不明' }).t}">${i + 1}</i>`).join('');
+  return `<div class="d-section"><h3>車廂擁擠度${t.carsStale ? `（${esc(t.carsStation || '上一站')}停靠時）` : ''}</h3><div class="cars">${cells}</div>
+    <div class="cars-legend">${Object.values(CROWD_LEVEL).map(x => `<span><i style="--c:${x.c}"></i>${x.t}</span>`).join('')}</div>
+    <div class="d-sub" style="margin-top:6px">臺北捷運會員 API · 資料 ${fmtTime(t.carsTime)}</div></div>`;
 }
 // 營運公司官網的營運狀態／目前班距（目前只有臺中捷運）；班距若與模擬用的不同，就用官網的重新合成班表
 async function fetchStatus(S) {
@@ -1282,6 +1351,7 @@ function computeAllTrains() {
     let mine = [];
     if (S.mode === 'platform') {
       if (S.live.feedTime) mine = platformUpdate(S.tracker, S, S.nameIdx, S.live.feed, S.live.srcTime, now).filter(t => { const l = lineByKey(t.lineKey); return l && !l.hidden; });
+      if (S.crowd && S.crowd.list) attachCrowding(S, mine);
       const covered = new Set(mine.map(t => t.lineKey));
       for (const line of S.lines.values()) if (!line.hidden && !covered.has(line.key) && line.alsoIn.length) mine.push(...computeTrainsForLine(line));
     } else if (S.mode === 'train') {
@@ -1395,7 +1465,8 @@ function trainTip(t) {
   const line = lineByKey(t.lineKey), S = state.systems[t.sys]; if (!line || !S) return '';
   const nm = id => (S.stations.get(id) || {}).name || id;
   const where = t.status === 'at' ? `停靠 ${nm(t.at)}` : t.status === 'wait' ? `${nm(t.at)} 待發車` : `${nm(t.from)} → ${nm(t.to)} · ${fmtEta(t.eta)}`;
-  return `<b style="color:${esc(line.color)}">${esc(line.name)}</b> 往 ${esc(t.destName || nm(t.dest))}<br>${esc(where)}${t.source === 'platform' ? '' : '<br><small>班表推估</small>'}`;
+  const cars = t.cars ? '<br>' + t.cars.map(lv => `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:2px;background:${(CROWD_LEVEL[lv] || { c: '#999' }).c}"></span>`).join('') + (t.carsStale ? ' <small>上一站</small>' : '') : '';
+  return `<b style="color:${esc(line.color)}">${esc(line.name)}</b> 往 ${esc(t.destName || nm(t.dest))}<br>${esc(where)}${t.source === 'platform' ? '' : '<br><small>班表推估</small>'}${cars}`;
 }
 /* ---------- 公車：GPS 點位（臺北市／新北市公開檔） ---------- */
 map.createPane('buses').style.zIndex = 440;
@@ -1553,7 +1624,8 @@ function liveMeta(S) {
   const age = L2.srcTime ? Math.round((Date.now() - L2.srcTime) / 1000) : null;
   const stale = age != null && age > 150 ? `（來源已 ${Math.round(age / 60)} 分未更新）` : '';
   const un = S.tracker.unresolved ? ` · ${S.tracker.unresolved} 筆站名對不上` : '';
-  return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}${patched}`;
+  const crowd = S.crowd && S.crowd.enabled ? (S.crowd.err ? ` · 擁擠度：${esc(S.crowd.err)}` : ` · 擁擠度 ${S.crowd.list ? S.crowd.list.length : 0} 列`) : '';
+  return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}${patched}${crowd}`;
 }
 function renderSystems() {
   const html = []; let lastGroup = null;
@@ -1633,6 +1705,7 @@ function showTrainDetail(uid) {
       <dt>來源更新</dt><dd class="num">${fmtTime(t.srcTime || state.lastLiveAt)}</dd>
       <dt>路線代碼</dt><dd>${esc(line.id)}${t.dest ? ' · 終點 ' + esc(t.dest) : ''}</dd>
     </dl></div>
+    ${carsHtml(t)}
     ${t.ambiguous ? '<p class="d-sub" style="margin-top:12px">這個月台同時屬於兩條路線，資料無法分辨是哪一條，暫依第一條顯示。</p>' : ''}
     ${t.hops ? `<p class="d-sub" style="margin-top:12px">這列車已連續 ${t.hops} 站沒被進站資料看到，位置為純推算。</p>` : ''}
     <p class="d-sub" style="margin-top:12px">${t.source === 'platform' ? '離開月台後的位置由站間行駛時間推算，實際可能略有前後。' : t.source === 'train' ? '依定期時刻表模擬；台鐵誤點很常見，實際位置可能落後圖上位置。' : '依班表推估，未考慮誤點與臨時調度。'}</p>
@@ -1730,16 +1803,26 @@ function applyTheme(dark) {
 applyTheme(loadPref('theme') ? loadPref('theme') === 'dark' : darkMedia.matches);
 darkMedia.addEventListener && darkMedia.addEventListener('change', e => { if (!loadPref('theme')) applyTheme(e.matches); });
 $('btnTheme').addEventListener('click', () => { const d = !isDark(); applyTheme(d); savePref('theme', d ? 'dark' : 'light'); });
-let meMarker = null;
+// 定位：按一下開始持續追蹤並跟著你移動；拖動地圖會暫停跟隨（按鈕變「回到我」）；跟隨中再按一下就關掉
+const geo = { watchId: null, follow: false, marker: null, circle: null, ll: null };
+function setLocateBtn() { const b = $('btnLocate'); b.classList.toggle('track', geo.watchId != null && geo.follow); b.classList.toggle('on', geo.watchId != null && !geo.follow); b.textContent = geo.watchId == null ? '定位' : geo.follow ? '定位中' : '回到我'; }
+function stopGeo() { if (geo.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(geo.watchId); geo.watchId = null; geo.follow = false; if (geo.marker) { map.removeLayer(geo.marker); geo.marker = null; } if (geo.circle) { map.removeLayer(geo.circle); geo.circle = null; } setLocateBtn(); }
+function onGeo(pos) {
+  const ll = [pos.coords.latitude, pos.coords.longitude], first = !geo.ll; geo.ll = ll;
+  if (!geo.marker) { geo.marker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1, pane: 'markerPane' }).bindTooltip('你的位置').addTo(map); geo.circle = L.circle(ll, { radius: pos.coords.accuracy || 30, color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: .12, interactive: false, pane: 'lines' }).addTo(map); }
+  else { geo.marker.setLatLng(ll); geo.circle.setLatLng(ll); geo.circle.setRadius(pos.coords.accuracy || 30); }
+  if (geo.follow) { if (first) map.flyTo(ll, Math.max(map.getZoom(), 15), { duration: .8 }); else map.panTo(ll, { animate: true, duration: .8, easeLinearity: 1 }); }
+}
 $('btnLocate').addEventListener('click', () => {
   if (!navigator.geolocation) { toast('這個瀏覽器不支援定位'); return; }
-  navigator.geolocation.getCurrentPosition(pos => {
-    const ll = [pos.coords.latitude, pos.coords.longitude];
-    if (!meMarker) meMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1, pane: 'markerPane' }).bindTooltip('你的位置').addTo(map);
-    else meMarker.setLatLng(ll);
-    map.flyTo(ll, Math.max(map.getZoom(), 14), { duration: .8 });
-  }, () => toast('取不到位置，請確認已允許瀏覽器使用定位'), { enableHighAccuracy: true, timeout: 8000 });
+  if (geo.watchId != null && geo.follow) { stopGeo(); return; }                       // 跟隨中 → 關掉
+  geo.follow = true; setLocateBtn();
+  if (geo.watchId != null) { if (geo.ll) map.flyTo(geo.ll, Math.max(map.getZoom(), 15), { duration: .6 }); return; }   // 追蹤中但沒跟隨 → 回到我
+  geo.watchId = navigator.geolocation.watchPosition(onGeo, err => { stopGeo(); toast(err && err.code === 1 ? '沒有定位權限，請在瀏覽器設定允許此網站使用位置' : '取不到位置，請確認已開啟定位'); }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  setLocateBtn();
 });
+map.on('dragstart', () => { if (geo.watchId != null && geo.follow) { geo.follow = false; setLocateBtn(); } });
+document.addEventListener('visibilitychange', () => { if (document.hidden && geo.watchId != null && !geo.follow) stopGeo(); });
 $('btnSystems').addEventListener('click', () => $('systemsPanel').classList.toggle('open'));
 $('closeSystems').addEventListener('click', () => $('systemsPanel').classList.remove('open'));
 $('closeDetail').addEventListener('click', closeDetail);
