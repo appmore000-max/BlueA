@@ -636,10 +636,10 @@ const CORE = (() => {
   function platformUpdate(tracker, S, idx, records, feedTime, now, dwellSec = 30) {
     const T = feedTime || now;
     if (tracker.lastFeedTime !== T) {
-      const cur = new Map(); let unresolved = 0;
+      const cur = new Map(); let unresolved = 0; const names = new Set();
       const prefer = cands => { let i = cands.findIndex(c => tracker.seenAt.has(c.line.key + '|' + c.sid + '|' + c.dest)); if (i < 0) i = cands.findIndex(c => [...tracker.moving.values()].some(m => m.line === c.line && m.dest === c.dest && (m.to === c.sid || m.from === c.sid))); return i; };
-      for (const rec of records) { const r = resolvePlatformRecord(idx, rec, prefer); if (!r) { unresolved++; continue; } cur.set(r.line.key + '|' + r.sid + '|' + r.dest, r); }
-      tracker.unresolved = unresolved;
+      for (const rec of records) { const r = resolvePlatformRecord(idx, rec, prefer); if (!r) { unresolved++; names.add(`${rec.Station ?? rec.StationName ?? '?'}→${rec.Destination ?? rec.DestinationName ?? '?'}`); continue; } cur.set(r.line.key + '|' + r.sid + '|' + r.dest, r); }
+      tracker.unresolved = unresolved; tracker.unresolvedNames = [...names].slice(0, 3);
       for (const [key, r] of cur) {                    // 現在在月台的列車
         const prev = tracker.seenAt.get(key); if (prev) { prev.lastSeen = T; continue; }
         let uid = null;                                // 新出現：多半是推算中的列車剛到站
@@ -1623,7 +1623,7 @@ function liveMeta(S) {
   if (!L2.feedTime) return '等待即時資料…';
   const age = L2.srcTime ? Math.round((Date.now() - L2.srcTime) / 1000) : null;
   const stale = age != null && age > 150 ? `（來源已 ${Math.round(age / 60)} 分未更新）` : '';
-  const un = S.tracker.unresolved ? ` · ${S.tracker.unresolved} 筆站名對不上` : '';
+  const un = S.tracker.unresolved ? ` · ${S.tracker.unresolved} 筆站名對不上（${esc((S.tracker.unresolvedNames || []).join('、'))}）` : '';
   const crowd = S.crowd && S.crowd.enabled ? (S.crowd.err ? ` · 擁擠度：${esc(S.crowd.err)}` : ` · 擁擠度 ${S.crowd.list ? S.crowd.list.length : 0} 列`) : '';
   return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}${patched}${crowd}`;
 }
