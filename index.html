@@ -599,7 +599,7 @@ const CORE = (() => {
   /* ---------- 臺北捷運公開「列車進站站名」資料（免金鑰、每 30 秒）→ 追蹤全部列車 ---------- */
   // 資料只說「現在哪個月台有列車、往哪裡」；列車離開月台後，用站間行駛時間推算它在兩站之間的位置，
   // 直到它在下一站的月台再出現為止；若在下一站沒被看到（進出站剛好落在兩次更新之間），繼續往前推最多兩站。
-  const normName = s => String(s || '').replace(/臺/g, '台').replace(/[\s()（）]/g, '').replace(/站$/, '').toLowerCase();
+  const normName = s => String(s || '').replace(/臺/g, '台').replace(/[\s()（）\/／·・‧]/g, '').replace(/站$/, '').toLowerCase();
   function buildNameIndex(S) {                        // 站名 → [{line, id}]
     const idx = new Map();
     const add = (k, v) => { if (!k) return; if (!idx.has(k)) idx.set(k, []); idx.get(k).push(v); };
@@ -892,7 +892,7 @@ const { haversine, bearing, zh, num, normColor, pickArray, parseWKT, decodePolyl
 const CONFIG = {
   dataBase: './data',   // 靜態路網資料（由 GitHub Actions 從 TDX 產生，見 README）
   title: '',            // 想改網站名稱就填這裡（或 config.json 的 title），空白＝用預設的「台灣大眾運輸即時地圖」
-  liveProxy: 'https://late-hill-b6d1.qqaawwss6574.workers.dev/',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
+  liveProxy: '',        // 免費 Cloudflare Worker 代理網址，例如 'https://mrt-live.你的帳號.workers.dev'
                         // 留空＝瀏覽器直接抓臺北捷運公開資料；若被 CORS 擋住，畫面會提示你建立代理
   // 國定假日備援清單（這幾天用假日班表）。正常情況下 Actions 會抓行事曆存成 data/holidays.json，自動涵蓋今年與明年；
   // 這份清單只在抓不到時使用，也可以在這裡加自己想要的日期
@@ -1022,8 +1022,10 @@ async function loadSystem(cfg) {
   try {
     const get = k => loadStatic(cfg.id, k).catch(() => null);
     if (cfg.kind === 'train') { await loadRailSystem(S, get); S.status = 'ok'; renderSystems(); return; }
-    const [lines, stations, routes, sol, shapes, s2s] = await Promise.all(['Line', 'Station', 'StationOfRoute', 'StationOfLine', 'Shape', 'S2STravelTime'].map(get));
-    if (!lines || !stations) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json：repo 裡還沒有 data/ 資料夾。到 GitHub 的 Actions 頁籤，選「更新資料並部署」按 Run workflow 跑一次（需先在 Settings → Secrets 填 TDX_CLIENT_ID / TDX_CLIENT_SECRET）`);
+    const [lines0, stations0, routes0, sol0, shapes0, s2s0, patch] = await Promise.all([...['Line', 'Station', 'StationOfRoute', 'StationOfLine', 'Shape', 'S2STravelTime'].map(get), loadStatic('patches', cfg.id).catch(() => null)]);
+    if (!lines0 || !stations0) throw new Error(`找不到 data/${cfg.id}/Line.json 或 Station.json：repo 裡還沒有 data/ 資料夾。到 GitHub 的 Actions 頁籤，選「更新資料並部署」按 Run workflow 跑一次（需先在 Settings → Secrets 填 TDX_CLIENT_ID / TDX_CLIENT_SECRET）`);
+    const { lines, stations, routes, sol, shapes, s2s } = applyPatch({ lines: lines0, stations: stations0, routes: routes0, sol: sol0, shapes: shapes0, s2s: s2s0 }, patch);
+    if (patch) S.patched = true;
     buildSystem(S, lines, stations, routes, sol || [], shapes || [], s2s || []);
     if (!S.lines.size) throw new Error('沒有路線資料');
     if (cfg.live === 'platform') { S.mode = 'platform'; S.nameIdx = buildNameIndex(S); }
@@ -1032,12 +1034,39 @@ async function loadSystem(cfg) {
   } catch (e) { S.status = 'error'; S.err = e.message; }
   renderSystems();
 }
+// 手動補丁 data/patches/<系統>.json：TDX 還沒更新的新車站／延伸段先自己補上（Actions 不會動這個資料夾）
+// 格式見 README；stations 依 StationID 新增或覆蓋，routeEdits 把新站接在既有路線的端點，shapes / s2s 直接追加
+function applyPatch(raw, patch) {
+  if (!patch || typeof patch !== 'object') return raw;
+  const out = { ...raw };
+  const merge = (list, adds, key) => { const arr = pickArray(list || []).slice(); for (const it of (adds || [])) { const i = arr.findIndex(x => x[key] === it[key]); if (i >= 0) arr[i] = { ...arr[i], ...it }; else arr.push(it); } return arr; };
+  if (patch.stations) out.stations = merge(out.stations, patch.stations, 'StationID');
+  if (patch.lines) out.lines = merge(out.lines, patch.lines, 'LineID');
+  if (patch.routeEdits) {
+    const fix = list => pickArray(list || []).map(r => ({ ...r, Stations: (r.Stations || []).slice().sort((a, b) => (num(a.Sequence) || 0) - (num(b.Sequence) || 0)) }));
+    out.routes = fix(out.routes); out.sol = fix(out.sol);
+    for (const e of patch.routeEdits) for (const r of [...out.routes, ...out.sol]) {
+      if (r.LineID && e.LineID && r.LineID !== e.LineID) continue;
+      const ids = r.Stations.map(x => x.StationID); if (!ids.length || e.stations.some(id => ids.includes(id))) continue;
+      const mk = id => ({ StationID: id, StationName: (patch.stations || []).find(st => st.StationID === id)?.StationName });
+      if (ids[0] === e.at) r.Stations.unshift(...e.stations.slice().reverse().map(mk));
+      else if (ids[ids.length - 1] === e.at) r.Stations.push(...e.stations.map(mk));
+      else continue;
+      r.Stations.forEach((st, i) => { st.Sequence = i + 1; });
+    }
+  }
+  if (patch.shapes) out.shapes = [...pickArray(out.shapes || []), ...patch.shapes];
+  if (patch.s2s) out.s2s = [...pickArray(out.s2s || []), ...patch.s2s.map(x => ({ LineID: x.LineID, TravelTimes: [{ FromStationID: x.From, ToStationID: x.To, RunTime: x.RunTime, StopTime: x.StopTime || 0 }, { FromStationID: x.To, ToStationID: x.From, RunTime: x.RunTime, StopTime: x.StopTime || 0 }] }))];
+  return out;
+}
 // 台鐵／高鐵：路網 + 定期時刻表（Trains.json）。高鐵沒有 Line／StationOfLine 就用車站代碼順序合成一條線
 async function loadRailSystem(S, get) {
   const cfg = S.cfg;
-  const [stations, linesRaw, solRaw, shapes, trains] = await Promise.all(['Station', 'Line', 'StationOfLine', 'Shape', 'Trains'].map(get));
-  if (!stations) throw new Error(`找不到 data/${cfg.id}/Station.json：請重新執行 Actions「更新資料並部署」（新版會抓台鐵、高鐵）`);
-  let lines = linesRaw ? pickArray(linesRaw) : [], sol = solRaw ? pickArray(solRaw) : [];
+  const [stations0, linesRaw, solRaw, shapes0, trains, patch] = await Promise.all([...['Station', 'Line', 'StationOfLine', 'Shape', 'Trains'].map(get), loadStatic('patches', cfg.id).catch(() => null)]);
+  if (!stations0) throw new Error(`找不到 data/${cfg.id}/Station.json：請重新執行 Actions「更新資料並部署」（新版會抓台鐵、高鐵）`);
+  const pr = applyPatch({ lines: linesRaw, stations: stations0, routes: [], sol: solRaw, shapes: shapes0, s2s: [] }, patch); if (patch) S.patched = true;
+  const stations = pr.stations, shapes = pr.shapes;
+  let lines = pr.lines ? pickArray(pr.lines) : [], sol = pr.sol ? pickArray(pr.sol) : [];
   if (!lines.length) {
     const ids = pickArray(stations).map(x => x.StationID).filter(Boolean).sort();
     lines = [{ LineID: cfg.id, LineName: { Zh_tw: cfg.name }, LineColor: cfg.color }];
@@ -1513,7 +1542,8 @@ async function showBusRoute(city, rid, gb) {
 /* ---------- 側欄：系統清單 ---------- */
 function liveMeta(S) {
   const L2 = S.live;
-  if (S.mode === 'none') return S.cfg.kind === 'train' ? '沒有時刻表資料（data/ 裡缺 Trains.json），僅顯示路線與車站' : '沒有此系統的時刻表或即時資料，僅顯示路線與車站';
+  const patched = S.patched ? ' · 已套用 patches 補丁' : '';
+  if (S.mode === 'none') return (S.cfg.kind === 'train' ? '沒有時刻表資料（data/ 裡缺 Trains.json），僅顯示路線與車站' : '沒有此系統的時刻表或即時資料，僅顯示路線與車站') + patched;
   if (S.mode === 'train') return `依定期時刻表逐車模擬（沒有免費的即時誤點資料）${S.trains.length === 0 && state.lastLiveAt ? '（目前沒有班次）' : ''}`;
   const none = S.trains.length === 0 && state.lastLiveAt ? '（目前沒有班次）' : '';
   if (S.mode === 'timetable') return `沒有免費即時資料，依站別時刻表推估${none}`;
@@ -1523,7 +1553,7 @@ function liveMeta(S) {
   const age = L2.srcTime ? Math.round((Date.now() - L2.srcTime) / 1000) : null;
   const stale = age != null && age > 150 ? `（來源已 ${Math.round(age / 60)} 分未更新）` : '';
   const un = S.tracker.unresolved ? ` · ${S.tracker.unresolved} 筆站名對不上` : '';
-  return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}`;
+  return `官方「列車進站」公開資料 · 月台 ${S.tracker.seenAt.size} 列、推算中 ${S.tracker.moving.size} 列 · 資料 ${fmtTime(L2.srcTime || L2.feedTime)}${stale}${un}${patched}`;
 }
 function renderSystems() {
   const html = []; let lastGroup = null;

@@ -1,0 +1,20 @@
+{
+  "note": "信義線東延段 廣慈/奉天宮站（R01）2026-08-30 通車；TDX 資料尚未更新前先以此補丁加上。TDX 更新後此檔可刪除（留著也不會重複）。",
+  "stations": [
+    {
+      "StationID": "R01",
+      "StationName": { "Zh_tw": "廣慈/奉天宮", "En": "Guangci/Fengtian Temple" },
+      "StationPosition": { "PositionLat": 25.0377, "PositionLon": 121.58243 },
+      "StationAddress": "臺北市信義區福德街86-1號"
+    }
+  ],
+  "routeEdits": [
+    { "LineID": "R", "at": "R02", "stations": ["R01"] }
+  ],
+  "shapes": [
+    { "LineID": "R", "Geometry": "LINESTRING(121.57008 25.032816,121.5726 25.0335,121.5757 25.0350,121.57846 25.03627,121.5804 25.0370,121.58243 25.0377)" }
+  ],
+  "s2s": [
+    { "LineID": "R", "From": "R02", "To": "R01", "RunTime": 120, "StopTime": 25 }
+  ]
+}

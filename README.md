@@ -79,6 +79,26 @@ Actions 每週從 TDX 抓「定期時刻表」（每一車次的全部停靠站�
 - 只有這兩市有免金鑰的 GPS 公開檔；預設關閉，勾了才抓，避免手機吃流量。
 - 面板底下有「公車路線查詢」：選縣市、打路線號碼，畫出去程／返程的線型與站牌並列出站名；臺北、新北會同時把該路線的車輛放大、其他車淡化。其他縣市的路網由 Actions 從 TDX 抓（`.github/workflows/deploy.yml` 的 `BUS_TDX_CITIES`，預設 `Taichung`，可逗號加更多），一個縣市每週 3 次呼叫、約 10～20 MB，TDX 以計量算點數，加太多縣市會吃掉免費點數。
 
+## 手動補丁：TDX 還沒更新的新站
+
+新路線或新車站通車後，TDX 的路網資料常常要過一段時間才更新，這期間可以在 `data/patches/<系統代碼>.json` 自己補上（Actions 只寫 `data/<系統>/` 底下的檔案，不會動 `patches/`）。開頁時會套用，面板會顯示「已套用 patches 補丁」；等 TDX 更新後把檔案刪掉即可，留著也不會重複。
+
+範例 `data/patches/TRTC.json`（2026-08-30 通車的信義線東延段 廣慈/奉天宮站 R01）：
+
+```json
+{
+  "stations": [{ "StationID": "R01", "StationName": { "Zh_tw": "廣慈/奉天宮", "En": "Guangci/Fengtian Temple" }, "StationPosition": { "PositionLat": 25.0377, "PositionLon": 121.58243 } }],
+  "routeEdits": [{ "LineID": "R", "at": "R02", "stations": ["R01"] }],
+  "shapes": [{ "LineID": "R", "Geometry": "LINESTRING(121.57008 25.032816,121.5726 25.0335,121.5757 25.0350,121.57846 25.03627,121.5804 25.0370,121.58243 25.0377)" }],
+  "s2s": [{ "LineID": "R", "From": "R02", "To": "R01", "RunTime": 120, "StopTime": 25 }]
+}
+```
+
+- `stations`：依 StationID 新增或覆蓋。
+- `routeEdits`：把 `stations` 接在該路線中以 `at` 為端點的路徑外側（去程與返程都會處理）。
+- `shapes`：追加線型（WKT，經度在前）。
+- `s2s`：站間行駛秒數與停靠秒數（雙向）。
+
 ## 班表推估的規則
 
 - 營運日以凌晨 4 點切換：00:15 的末班車算前一天班表；末班車開走後到隔天首班車前，地圖上不會有列車，面板顯示「目前沒有班次」。
