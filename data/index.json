@@ -1,29 +1,29 @@
 {
- "generatedAt": "2026-09-06T20:15:26.389Z",
+ "generatedAt": "2026-09-13T20:15:28.353Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
    "Line": 5,
-   "Station": 121,
+   "Station": 122,
    "StationOfRoute": 22,
    "StationOfLine": 5,
    "Shape": 5,
    "S2STravelTime": 11,
    "FirstLastTimetable": 217,
    "Frequency": 22,
-   "StationExit": 437
+   "StationExit": 439
   },
   "NTMC": {
-   "Line": 1,
-   "Station": 14,
-   "StationOfRoute": 2,
-   "StationOfLine": 1,
+   "Line": 2,
+   "Station": 26,
+   "StationOfRoute": 4,
+   "StationOfLine": 2,
    "Shape": 1,
-   "S2STravelTime": 1,
-   "StationTimeTable": 50,
-   "FirstLastTimetable": 26,
+   "S2STravelTime": 2,
+   "StationTimeTable": 52,
+   "FirstLastTimetable": 70,
    "Frequency": 2,
-   "StationExit": 24
+   "StationExit": 47
   },
   "NTDLRT": {
    "Line": 1,
@@ -32,7 +32,7 @@
    "StationOfLine": 1,
    "Shape": 1,
    "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
-   "StationTimeTable": 68,
+   "StationTimeTable": 84,
    "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
    "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, ",
    "StationExit": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTDLRT' is not accepted but TRTC, KRTC, TYMC, "
@@ -44,7 +44,7 @@
    "StationOfLine": 1,
    "Shape": 1,
    "S2STravelTime": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
-   "StationTimeTable": 32,
+   "StationTimeTable": 38,
    "FirstLastTimetable": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
    "Frequency": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, ",
    "StationExit": "error: HTTP 400 {\"Message\":\"RailSystem: 'NTALRT' is not accepted but TRTC, KRTC, TYMC, "
@@ -113,13 +113,13 @@
  },
  "bus": {
   "TPE": {
-   "routes": 792,
-   "stops": 28862,
+   "routes": 791,
+   "stops": 28820,
    "shapes": 1010,
    "files": 416
   },
   "NTPC": {
-   "routes": 1070,
+   "routes": 1071,
    "stops": 33275,
    "shapes": 1316,
    "files": 635
