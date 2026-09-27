@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-20T20:14:42.409Z",
+ "generatedAt": "2026-09-27T20:15:23.560Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
@@ -18,7 +18,7 @@
    "Station": 26,
    "StationOfRoute": 4,
    "StationOfLine": 2,
-   "Shape": 1,
+   "Shape": 2,
    "S2STravelTime": 2,
    "StationTimeTable": 96,
    "FirstLastTimetable": 70,
@@ -57,7 +57,7 @@
    "Shape": 1,
    "S2STravelTime": 2,
    "StationTimeTable": 128,
-   "FirstLastTimetable": 160,
+   "FirstLastTimetable": 81,
    "Frequency": 1,
    "StationExit": 39
   },
@@ -103,7 +103,7 @@
    "StationOfLine": 12,
    "Shape": 20,
    "TrainType": 55,
-   "Trains": 954
+   "Trains": 953
   },
   "THSR": {
    "Station": 12,
@@ -114,7 +114,7 @@
  "bus": {
   "TPE": {
    "routes": 791,
-   "stops": 28801,
+   "stops": 28812,
    "shapes": 1010,
    "files": 416
   },
