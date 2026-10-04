@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-27T20:15:23.560Z",
+ "generatedAt": "2026-10-04T21:28:03.833Z",
  "source": "TDX 運輸資料流通服務 https://tdx.transportdata.tw/ ＋ 臺北市公車動態資訊系統公開檔",
  "systems": {
   "TRTC": {
@@ -57,7 +57,7 @@
    "Shape": 1,
    "S2STravelTime": 2,
    "StationTimeTable": 128,
-   "FirstLastTimetable": 81,
+   "FirstLastTimetable": 181,
    "Frequency": 1,
    "StationExit": 39
   },
@@ -103,7 +103,7 @@
    "StationOfLine": 12,
    "Shape": 20,
    "TrainType": 55,
-   "Trains": 953
+   "Trains": 954
   },
   "THSR": {
    "Station": 12,
@@ -114,22 +114,22 @@
  "bus": {
   "TPE": {
    "routes": 791,
-   "stops": 28812,
+   "stops": 28814,
    "shapes": 1010,
    "files": 416
   },
   "NTPC": {
-   "routes": 1075,
-   "stops": 33280,
-   "shapes": 1317,
+   "routes": 1073,
+   "stops": 33279,
+   "shapes": 1315,
    "files": 635
   },
   "Taichung": {
    "source": "tdx",
-   "routes": 755,
-   "stops": 755,
-   "shapes": 761,
-   "files": 389
+   "routes": 761,
+   "stops": 761,
+   "shapes": 767,
+   "files": 392
   }
  }
 }
